@@ -1,0 +1,13 @@
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.venv/
+venv/
+env/
+.env
+.pytest_cache/
+.vscode/
+.idea/
+data/workout_history.db
+*.log
