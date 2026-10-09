@@ -884,7 +884,7 @@ export default function App() {
   }, []);
 
   // ── Trigger profile fetch once auth is resolved and user is present ────────────
-  // On login: call /api/profile/check (MongoDB). If profile doesn't exist, create it.
+  // On login: call /api/profile/check (MySQL). If profile doesn't exist, create it.
   // If profile incomplete → complete-profile page. If complete → dashboard.
   useEffect(() => {
     if (authLoading) return;
@@ -1001,7 +1001,7 @@ export default function App() {
 
   /**
    * checkAndLoadProfile — called on login / auth state resolution.
-   * 1. Checks MongoDB profile with deduplication to prevent duplicate StrictMode calls.
+   * 1. Checks MySQL profile with deduplication to prevent duplicate StrictMode calls.
    * 2. Renders profile immediately and syncs localStorage cache (< 500ms).
    * 3. Launches secondary metrics (History, Plan, Circuit, Leaderboard) in parallel background requests.
    */
