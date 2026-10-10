@@ -1,29 +1,25 @@
 """
-Unit tests for UserManager and SQLite workout session logging.
+Unit tests for UserManager MySQL workout session logging.
 """
 
+import os
 import unittest
-import tempfile
-import json
-from pathlib import Path
-
 from src.user_manager import UserManager
+from db.database import init_db, reset_db_engine
 
 
 class TestUserManager(unittest.TestCase):
-    """Test user profile persistence and workout database operations."""
+    """Test user profile persistence and workout database operations via MySQL."""
+
+    @classmethod
+    def setUpClass(cls):
+        os.environ["ENV"] = "testing"
+        os.environ["MYSQL_URL"] = "sqlite:///:memory:"
+        reset_db_engine()
+        init_db()
 
     def setUp(self) -> None:
-        self.temp_dir = tempfile.TemporaryDirectory()
-        self.profile_path = Path(self.temp_dir.name) / "test_user_profile.json"
-        self.db_path = Path(self.temp_dir.name) / "test_workout_history.db"
-        self.manager = UserManager(
-            profile_path=self.profile_path,
-            db_path=self.db_path,
-        )
-
-    def tearDown(self) -> None:
-        self.temp_dir.cleanup()
+        self.manager = UserManager(firebase_uid="user_mgr_test_uid")
 
     def test_default_profile(self) -> None:
         profile = self.manager.get_profile()
@@ -49,7 +45,6 @@ class TestUserManager(unittest.TestCase):
         self.assertEqual(retrieved["weight_kg"], 64.5)
 
     def test_record_and_query_sessions(self) -> None:
-        # Record session 1
         session_id = self.manager.record_session(
             exercise_type="pushup",
             exercise_name="Push-up",
@@ -67,7 +62,6 @@ class TestUserManager(unittest.TestCase):
         self.assertIsInstance(session_id, int)
         self.assertGreater(session_id, 0)
 
-        # Retrieve recent sessions
         sessions = self.manager.get_recent_sessions(limit=5)
         self.assertEqual(len(sessions), 1)
         s = sessions[0]
@@ -77,7 +71,6 @@ class TestUserManager(unittest.TestCase):
         self.assertEqual(s["kcal_point"], 4.30)
         self.assertEqual(s["rep_rom_data"], [80.0, 78.0, 77.5])
 
-        # Check Aggregate Stats
         stats = self.manager.get_aggregate_stats()
         self.assertEqual(stats["total_workouts"], 1)
         self.assertEqual(stats["total_reps"], 15)

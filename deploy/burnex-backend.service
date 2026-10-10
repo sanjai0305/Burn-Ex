@@ -1,0 +1,21 @@
+[Unit]
+Description=Burn-Ex FastAPI Production Backend Service
+After=network.target mysql.service
+
+[Service]
+Type=simple
+User=ubuntu
+Group=ubuntu
+WorkingDirectory=/var/www/burnex/current/backend
+EnvironmentFile=/var/www/burnex/shared/.env
+ExecStart=/var/www/burnex/venv/bin/uvicorn api:app --host 127.0.0.1 --port 8000 --workers 4 --log-level info
+Restart=always
+RestartSec=5s
+
+# Security Hardening
+PrivateTmp=true
+ProtectSystem=full
+ProtectHome=false
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,14 @@
+# Example Terraform Variable Values for Burn-Ex AWS Deployment
+# Rename to terraform.tfvars and fill in your actual infrastructure variables.
+# NEVER commit terraform.tfvars to git.
+
+aws_region               = "ap-south-1"
+environment              = "production"
+ec2_instance_type        = "t3.medium"
+db_instance_class        = "db.t4g.micro"
+mysql_version            = "8.0"
+db_name                  = "burnex_db"
+db_username              = "burnex_user"
+db_password              = "YOUR_SECURE_RDS_PASSWORD_HERE"
+github_repo              = "your-github-username/burn-ex"
+github_oidc_provider_arn = "arn:aws:iam::123456789012:oidc-provider/token.actions.githubusercontent.com"

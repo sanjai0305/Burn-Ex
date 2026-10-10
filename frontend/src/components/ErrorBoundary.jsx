@@ -7,7 +7,7 @@
  */
 
 import React from 'react';
-import { AlertTriangle, RefreshCw, Trash2, ShieldAlert } from 'lucide-react';
+import { ShieldAlert, RefreshCw, RotateCcw } from 'lucide-react';
 
 export class ErrorBoundary extends React.Component {
   constructor(props) {
@@ -28,40 +28,55 @@ export class ErrorBoundary extends React.Component {
     this.setState({ errorInfo });
   }
 
+  handleRetry = () => {
+    this.setState({ hasError: false, error: null, errorInfo: null });
+  };
+
   handleReload = () => {
     window.location.reload();
   };
 
-  handleResetAndReload = () => {
-    try {
-      localStorage.clear();
-      sessionStorage.clear();
-    } catch (e) {}
-    window.location.reload();
+  getFormattedErrorMessage = () => {
+    const err = this.state.error;
+    if (!err) return 'An unexpected UI error occurred.';
+    if (typeof err === 'string') return err;
+    if (err instanceof Error) return err.message || err.toString();
+    if (typeof err === 'object') {
+      try {
+        if (err.msg) return String(err.msg);
+        if (err.message) return String(err.message);
+        return JSON.stringify(err);
+      } catch (e) {
+        return 'Object error (unable to stringify)';
+      }
+    }
+    return String(err);
   };
 
   render() {
     if (this.state.hasError) {
+      const errorMessage = this.getFormattedErrorMessage();
+
       return (
-        <div className="min-h-screen bg-slate-950 flex items-center justify-center p-4 font-sans text-slate-100 select-none">
-          <div className="w-full max-w-lg bg-slate-900/90 border border-slate-800 rounded-3xl p-6 shadow-2xl space-y-5 text-center">
+        <div className="min-h-screen bg-[#F7F8FF] flex items-center justify-center p-4 font-sans text-[#10183F] select-none">
+          <div className="w-full max-w-md bg-white border border-[#E6E8F5] rounded-3xl p-6 sm:p-8 shadow-xl space-y-5 text-center">
             
-            <div className="w-14 h-14 bg-red-500/10 border border-red-500/20 rounded-2xl flex items-center justify-center mx-auto text-red-500 shadow-inner">
-              <ShieldAlert size={30} />
+            <div className="w-14 h-14 bg-red-50 border border-red-100 rounded-2xl flex items-center justify-center mx-auto text-red-500 shadow-sm">
+              <ShieldAlert size={28} />
             </div>
 
             <div>
-              <h1 className="text-xl font-black tracking-tight text-white">Something Went Wrong</h1>
-              <p className="text-slate-400 text-xs mt-1.5 font-medium leading-relaxed">
-                Burn-Ex caught an unexpected UI error. The error has been logged for analysis.
+              <h1 className="text-xl font-black tracking-tight text-[#10183F]">Something Went Wrong</h1>
+              <p className="text-[#66729B] text-xs mt-1.5 font-medium leading-relaxed">
+                Burn-Ex caught an unexpected UI rendering error. Your entered data is preserved where possible.
               </p>
             </div>
 
             {/* Error Message Snippet */}
-            <div className="bg-slate-950/80 p-3.5 rounded-2xl border border-slate-800/80 text-left font-mono text-[11px] text-red-400 overflow-x-auto max-h-36">
-              <strong>{this.state.error?.toString() || 'Unknown Error'}</strong>
+            <div className="bg-[#F7F8FF] p-3.5 rounded-2xl border border-[#E6E8F5] text-left font-mono text-[11px] text-red-600 overflow-x-auto max-h-32">
+              <strong className="block break-words">{errorMessage}</strong>
               {this.state.errorInfo?.componentStack && (
-                <pre className="text-[10px] text-slate-500 mt-2 whitespace-pre-wrap">
+                <pre className="text-[10px] text-[#66729B] mt-2 whitespace-pre-wrap font-mono">
                   {this.state.errorInfo.componentStack}
                 </pre>
               )}
@@ -71,20 +86,20 @@ export class ErrorBoundary extends React.Component {
             <div className="flex flex-col sm:flex-row gap-3 pt-2">
               <button
                 type="button"
-                onClick={this.handleReload}
-                className="flex-1 py-3 px-4 bg-indigo-600 hover:bg-indigo-700 text-white font-bold text-xs rounded-xl shadow-lg shadow-indigo-600/20 transition active:scale-95 flex items-center justify-center gap-2"
+                onClick={this.handleRetry}
+                className="flex-1 py-3 px-4 bg-gradient-to-r from-[#6345FF] to-[#8B5CF6] hover:from-[#5235E8] hover:to-[#7C3AED] text-white font-bold text-xs rounded-xl shadow-md shadow-[#6345FF]/20 transition active:scale-95 flex items-center justify-center gap-2"
               >
-                <RefreshCw size={15} />
-                Reload Application
+                <RotateCcw size={14} />
+                Try Again
               </button>
 
               <button
                 type="button"
-                onClick={this.handleResetAndReload}
-                className="py-3 px-4 bg-slate-800 hover:bg-slate-700 text-slate-300 font-bold text-xs rounded-xl border border-slate-700 transition active:scale-95 flex items-center justify-center gap-2"
+                onClick={this.handleReload}
+                className="flex-1 py-3 px-4 bg-[#F7F8FF] hover:bg-[#EEF0FF] text-[#10183F] font-bold text-xs rounded-xl border border-[#E6E8F5] transition active:scale-95 flex items-center justify-center gap-2"
               >
-                <Trash2 size={15} />
-                Reset & Reload
+                <RefreshCw size={14} />
+                Reload
               </button>
             </div>
 

@@ -1,6 +1,8 @@
 import os
 import requests
 import datetime
+import time
+import random
 from typing import List, Dict, Any, Optional
 
 # Simple environment variables loader if .env exists in backend root
@@ -15,6 +17,37 @@ if env_path.exists():
                 if len(parts) == 2:
                     os.environ[parts[0].strip()] = parts[1].strip()
 
+# ---------------------------------------------------------------------------
+# Structured Exception Hierarchy for Gemini API
+# ---------------------------------------------------------------------------
+
+class GeminiAPIError(Exception):
+    def __init__(self, message: str, status_code: int = 500, error_code: str = "GEMINI_ERROR"):
+        super().__init__(message)
+        self.message = message
+        self.status_code = status_code
+        self.error_code = error_code
+
+class GeminiUnavailableError(GeminiAPIError):
+    def __init__(self, message: str = "Gemini AI Coach is currently unavailable due to high demand. Please try again shortly."):
+        super().__init__(message, status_code=503, error_code="GEMINI_UNAVAILABLE")
+
+class GeminiRateLimitError(GeminiAPIError):
+    def __init__(self, message: str = "Gemini AI Coach rate limit exceeded. Please wait a moment before trying again."):
+        super().__init__(message, status_code=429, error_code="GEMINI_RATE_LIMITED")
+
+class GeminiTimeoutError(GeminiAPIError):
+    def __init__(self, message: str = "Gemini AI Coach request timed out. Please try again."):
+        super().__init__(message, status_code=504, error_code="GEMINI_TIMEOUT")
+
+class GeminiInvalidResponseError(GeminiAPIError):
+    def __init__(self, message: str = "Received an invalid or malformed response structure from Gemini API."):
+        super().__init__(message, status_code=502, error_code="GEMINI_INVALID_RESPONSE")
+
+class GeminiAuthError(GeminiAPIError):
+    def __init__(self, message: str = "Invalid or missing GEMINI_API_KEY credentials."):
+        super().__init__(message, status_code=401, error_code="GEMINI_AUTH_ERROR")
+
 def get_coach_chat_reply(
     uid: str,
     message: str,
@@ -28,13 +61,18 @@ def get_coach_chat_reply(
     Build context, retrieve conversation history, make Gemini API call,
     and update conversation history in the database.
     """
+    # Ensure profile and history_sessions are valid dict structures
+    if not isinstance(profile, dict):
+        profile = {}
+    history_sessions = [s for s in (history_sessions or []) if isinstance(s, dict)]
+
     # 1. Retrieve profile details
-    name = profile.get("name") if profile else "Athlete"
-    age = profile.get("age") if profile else "Unavailable"
-    height = profile.get("height_cm") if profile else "Unavailable"
-    weight = profile.get("weight_kg") if profile else "Unavailable"
-    gender = profile.get("gender") if profile else "Unavailable"
-    goal = profile.get("fitness_goal") if profile else "Unavailable"
+    name = profile.get("name", "Athlete")
+    age = profile.get("age", "Unavailable")
+    height = profile.get("height_cm", "Unavailable")
+    weight = profile.get("weight_kg", "Unavailable")
+    gender = profile.get("gender", "Unavailable")
+    goal = profile.get("fitness_goal", "Unavailable")
     
     # Target weight calculation
     target_weight = "Unavailable"
@@ -315,12 +353,28 @@ def get_coach_chat_reply(
 def call_gemini(system_instruction: str, contents: list) -> str:
     api_key = os.environ.get("GEMINI_API_KEY")
     if not api_key:
-        raise ValueError("GEMINI_API_KEY environment variable is missing")
+        raise GeminiAuthError("GEMINI_API_KEY environment variable is missing")
 
-    configured_model = os.environ.get("GEMINI_MODEL", "gemini-3.5-flash-lite")
-    candidate_models = [configured_model, "gemini-3.5-flash-lite", "gemini-2.5-flash", "gemini-1.5-flash"]
+    configured_model = os.environ.get("GEMINI_MODEL", "gemini-2.5-flash")
+    candidate_models = [configured_model, "gemini-2.5-flash", "gemini-1.5-flash", "gemini-3.5-flash-lite"]
     seen = set()
     models_to_try = [m for m in candidate_models if not (m in seen or seen.add(m))]
+
+    # Read retry and timeout configurations
+    try:
+        max_retries = int(os.environ.get("GEMINI_MAX_RETRIES", "3"))
+    except ValueError:
+        max_retries = 3
+
+    try:
+        timeout_sec = float(os.environ.get("GEMINI_TIMEOUT_SEC", "10.0"))
+    except ValueError:
+        timeout_sec = 10.0
+
+    try:
+        initial_backoff = float(os.environ.get("GEMINI_INITIAL_BACKOFF_SEC", "0.5"))
+    except ValueError:
+        initial_backoff = 0.5
 
     headers = {"Content-Type": "application/json"}
     payload = {
@@ -335,24 +389,76 @@ def call_gemini(system_instruction: str, contents: list) -> str:
         }
     }
 
-    last_error_text = ""
+    last_status_code = 503
+    last_error_msg = ""
+
     for model in models_to_try:
         url = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent?key={api_key}"
-        try:
-            res = requests.post(url, json=payload, headers=headers, timeout=12.0)
-            if res.status_code == 200:
-                data = res.json()
-                try:
-                    return data["candidates"][0]["content"]["parts"][0]["text"]
-                except (KeyError, IndexError) as e:
-                    print(f"[GeminiService] Failed parsing model {model} response: {res.text}")
-                    raise ValueError("Invalid response format from Gemini API")
-            else:
-                print(f"[GeminiService] Model {model} returned HTTP {res.status_code}: {res.text}")
-                last_error_text = f"HTTP {res.status_code}: {res.text}"
-        except requests.RequestException as req_err:
-            print(f"[GeminiService] Network exception calling model {model}: {req_err}")
-            last_error_text = str(req_err)
+        
+        for attempt in range(1, max_retries + 1):
+            try:
+                res = requests.post(url, json=payload, headers=headers, timeout=timeout_sec)
+                
+                if res.status_code == 200:
+                    try:
+                        data = res.json()
+                        text = data["candidates"][0]["content"]["parts"][0]["text"]
+                        if not text or not text.strip():
+                            raise GeminiInvalidResponseError("Gemini returned an empty text response")
+                        return text.strip()
+                    except (KeyError, IndexError, TypeError) as parse_err:
+                        print(f"[GeminiService] Failed parsing model {model} response: {parse_err}")
+                        raise GeminiInvalidResponseError("Invalid response format from Gemini API")
+                
+                status = res.status_code
+                last_status_code = status
+                last_error_msg = f"HTTP {status}: {res.text[:200]}"
 
-    raise ValueError(f"Gemini API error across all candidate models. Last error: {last_error_text}")
+                if status in (401, 403):
+                    raise GeminiAuthError("Gemini API key is invalid or unauthorized")
+                
+                if status == 400:
+                    raise GeminiAPIError("Invalid request parameters to Gemini API", status_code=400, error_code="GEMINI_BAD_REQUEST")
+
+                # Retryable status codes: 503, 429, 500, 502, 504
+                if status in (503, 429, 500, 502, 504):
+                    print(f"[GeminiService] Model {model} returned HTTP {status} (Attempt {attempt}/{max_retries})")
+                    
+                    if attempt < max_retries:
+                        # Respect Retry-After header if provided
+                        retry_after = res.headers.get("Retry-After")
+                        if retry_after and retry_after.isdigit():
+                            sleep_dur = float(retry_after)
+                        else:
+                            # Exponential backoff with uniform random jitter
+                            backoff = initial_backoff * (2 ** (attempt - 1))
+                            jitter = random.uniform(0, 0.25 * backoff)
+                            sleep_dur = min(backoff + jitter, 5.0)
+                        
+                        time.sleep(sleep_dur)
+                        continue
+                    else:
+                        break  # Retries exhausted for this model
+
+            except (requests.Timeout, requests.ConnectionError) as net_err:
+                print(f"[GeminiService] Network exception calling model {model} (Attempt {attempt}/{max_retries}): {net_err}")
+                last_status_code = 504 if isinstance(net_err, requests.Timeout) else 503
+                last_error_msg = str(net_err)
+                if attempt < max_retries:
+                    backoff = initial_backoff * (2 ** (attempt - 1))
+                    jitter = random.uniform(0, 0.25 * backoff)
+                    time.sleep(min(backoff + jitter, 5.0))
+                    continue
+                else:
+                    break
+
+    # If all candidate models and retries are exhausted, raise classified exception
+    if last_status_code == 429:
+        raise GeminiRateLimitError()
+    elif last_status_code == 504:
+        raise GeminiTimeoutError()
+    elif last_status_code == 502:
+        raise GeminiInvalidResponseError()
+    else:
+        raise GeminiUnavailableError(f"Gemini AI Coach is currently unavailable ({last_error_msg}). Please try again shortly.")
 

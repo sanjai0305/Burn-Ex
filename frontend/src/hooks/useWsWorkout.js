@@ -35,6 +35,9 @@ export function useWsWorkout() {
 
   // Clean up socket and intervals
   const cleanup = useCallback(() => {
+    if (!socketRef.current && !streamRef.current && !intervalIdRef.current) {
+      return; // Skip logging when no active streaming resources exist
+    }
     console.log("[BX WS Hook] Cleaning up WebSocket streaming session...");
     if (intervalIdRef.current) {
       clearInterval(intervalIdRef.current);
@@ -80,12 +83,12 @@ export function useWsWorkout() {
       const token = await getIdToken(false);
 
       // 3. Establish WebSocket connection
-      // Note: Use ws:// for HTTP development and wss:// for HTTPS production
-      const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-      const host = 'localhost:8000'; // FastAPI backend location
-      const socketUrl = `${protocol}//${host}/ws/live-workout?token=${encodeURIComponent(token)}`;
+      const apiBase = (import.meta.env && import.meta.env.VITE_API_BASE) || 'http://localhost:8000';
+      const rawHost = apiBase.replace(/^https?:\/\//, '');
+      const protocol = apiBase.startsWith('https') ? 'wss:' : 'ws:';
+      const socketUrl = `${protocol}//${rawHost}/ws/live-workout?token=${encodeURIComponent(token)}`;
       
-      console.log("[BX WS Hook] Connecting to WebSocket server:", `${protocol}//${host}/ws/live-workout`);
+      console.log("[BX WS Hook] Connecting to WebSocket server:", `${protocol}//${rawHost}/ws/live-workout`);
       const socket = new WebSocket(socketUrl);
       socketRef.current = socket;
 

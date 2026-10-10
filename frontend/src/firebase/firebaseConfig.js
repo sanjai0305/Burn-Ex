@@ -11,16 +11,16 @@ import { initializeAuth,
          browserPopupRedirectResolver }     from 'firebase/auth';
 
 // ── Project configuration ─────────────────────────────────────────────────────
-console.log("[BX Firebase Config] Loaded environment variables:", import.meta.env);
+const env = typeof import.meta !== 'undefined' && import.meta.env ? import.meta.env : {};
 
 const firebaseConfig = {
-  apiKey:            import.meta.env.VITE_FIREBASE_API_KEY            || 'AIzaSyDhDe5j0hVJHdTeSpg3NoBlICDuuCWydC8',
-  authDomain:        import.meta.env.VITE_FIREBASE_AUTH_DOMAIN        || 'burn-ex-a4591.firebaseapp.com',
-  projectId:         import.meta.env.VITE_FIREBASE_PROJECT_ID         || 'burn-ex-a4591',
-  storageBucket:     import.meta.env.VITE_FIREBASE_STORAGE_BUCKET     || 'burn-ex-a4591.firebasestorage.app',
-  messagingSenderId: import.meta.env.VITE_FIREBASE_MESSAGING_SENDER_ID || '262946573708',
-  appId:             import.meta.env.VITE_FIREBASE_APP_ID             || '1:262946573708:web:3abc613467d4318ba3daa9',
-  measurementId:     import.meta.env.VITE_FIREBASE_MEASUREMENT_ID     || 'G-4RRJLNEJVY',
+  apiKey:            env.VITE_FIREBASE_API_KEY            || 'AIzaSyCCT87JLxEmyysKTcfCE8jx9Q49vDZTzXI',
+  authDomain:        env.VITE_FIREBASE_AUTH_DOMAIN        || 'burn-x-7200b.firebaseapp.com',
+  projectId:         env.VITE_FIREBASE_PROJECT_ID         || 'burn-x-7200b',
+  storageBucket:     env.VITE_FIREBASE_STORAGE_BUCKET     || 'burn-x-7200b.firebasestorage.app',
+  messagingSenderId: env.VITE_FIREBASE_MESSAGING_SENDER_ID || '727012276322',
+  appId:             env.VITE_FIREBASE_APP_ID             || '1:727012276322:web:f512f244ee3dcccc37793b',
+  measurementId:     env.VITE_FIREBASE_MEASUREMENT_ID     || 'G-DQX8RQ7Q95',
 };
 
 // ── Initialize ────────────────────────────────────────────────────────────────

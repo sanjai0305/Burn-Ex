@@ -15,8 +15,7 @@ MODELS_DIR: Path = BASE_DIR / "models"
 MODEL_PATH: Path = MODELS_DIR / "burn_ex_xgboost.pkl"
 RAW_SESSIONS_CSV: Path = DATA_DIR / "raw_sessions.csv"
 REFERENCE_BASELINES_CSV: Path = DATA_DIR / "reference_baselines.csv"
-USER_PROFILE_PATH: Path = DATA_DIR / "user_profile.json"
-WORKOUT_DB_PATH: Path = DATA_DIR / "workout_history.db"
+USER_PROFILE_PATH: Path = DATA_DIR / "user_profile.json"  # Legacy reference
 
 # Make sure directories exist
 DATA_DIR.mkdir(parents=True, exist_ok=True)

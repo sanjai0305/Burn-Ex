@@ -3,6 +3,7 @@ import LoginPage from './components/LoginPage';
 import SignupPage from './components/SignupPage';
 import CompleteProfile from './components/CompleteProfile';
 import ProfileCompletionGuard from './components/ProfileCompletionGuard';
+import IndianPhoneInput, { validateIndianMobile } from './components/IndianPhoneInput';
 import AnalyticsPage from './components/AnalyticsPage';
 import WorkoutCountdown from './components/WorkoutCountdown';
 import PreWorkoutModal from './components/PreWorkoutModal';
@@ -22,6 +23,7 @@ const SAFE_EXERCISE_CONFIGS = EXERCISE_CONFIGS || {
   burpee: { name: "Burpee" }
 };
 import { useWsWorkout } from './hooks/useWsWorkout';
+import BurnExProModal from './components/BurnExProModal';
 import { 
   Trophy, 
   Activity, 
@@ -74,7 +76,13 @@ import {
   Laptop,
   Check,
   HelpCircle,
-  Smartphone
+  Smartphone,
+  Crown,
+  Search,
+  PieChart,
+  ChevronLeft,
+  CheckCheck,
+  Brain
 } from 'lucide-react';
 
 const API_BASE = import.meta.env.VITE_API_BASE || 'http://localhost:8000';
@@ -423,6 +431,14 @@ export default function App() {
   const [profileTab, setProfileTab] = useState('overview'); // 'overview' | 'personal' | 'account' | 'security' | 'notifications' | 'privacy' | 'preferences'
   const [avatarDropdownOpen, setAvatarDropdownOpen] = useState(false);
   const avatarDropdownRef = useRef(null);
+
+  // Notification State & Popover Ref
+  const [notificationsOpen, setNotificationsOpen] = useState(false);
+  const [notifications, setNotifications] = useState([]);
+  const [unreadNotifCount, setUnreadNotifCount] = useState(0);
+  const [notifLoading, setNotifLoading] = useState(false);
+  const [notifError, setNotifError] = useState(null);
+  const notifDropdownRef = useRef(null);
   
   // In-Memory Data Cache Refs & TTL (60s)
   const profileCacheTimeRef = useRef(0);
@@ -552,80 +568,16 @@ export default function App() {
   const [adminMetrics, setAdminMetrics] = useState(null);
   const [adminUsers, setAdminUsers] = useState([]);
 
-  // Default sample history sessions if backend returns empty or during initial load
-  const defaultSampleSessions = useMemo(() => {
-    const today = new Date();
-    const getIso = (daysAgo) => {
-      const d = new Date(today);
-      d.setDate(d.getDate() - daysAgo);
-      return d.toISOString().split('T')[0];
-    };
-    return [
-      {
-        session_id: 'sess_sample_1',
-        workout_date: getIso(0),
-        timestamp: `${getIso(0)}T07:30:00Z`,
-        exercise_name: 'Push-up Set',
-        exercise_type: 'pushup',
-        predicted_kcal: 185,
-        calories_burned: 185,
-        duration_sec: 420,
-        total_reps: 35,
-        valid_reps: 30,
-        form_score_pct: 94
-      },
-      {
-        session_id: 'sess_sample_2',
-        workout_date: getIso(2),
-        timestamp: `${getIso(2)}T08:15:00Z`,
-        exercise_name: 'Squat Circuit',
-        exercise_type: 'squat',
-        predicted_kcal: 240,
-        calories_burned: 240,
-        duration_sec: 600,
-        total_reps: 45,
-        valid_reps: 40,
-        form_score_pct: 91
-      },
-      {
-        session_id: 'sess_sample_3',
-        workout_date: getIso(4),
-        timestamp: `${getIso(4)}T17:45:00Z`,
-        exercise_name: 'HIIT Cardio',
-        exercise_type: 'jumping_jack',
-        predicted_kcal: 310,
-        calories_burned: 310,
-        duration_sec: 750,
-        total_reps: 80,
-        valid_reps: 75,
-        form_score_pct: 89
-      },
-      {
-        session_id: 'sess_sample_4',
-        workout_date: getIso(6),
-        timestamp: `${getIso(6)}T07:10:00Z`,
-        exercise_name: 'Lower Body Burn',
-        exercise_type: 'lunge',
-        predicted_kcal: 210,
-        calories_burned: 210,
-        duration_sec: 540,
-        total_reps: 40,
-        valid_reps: 36,
-        form_score_pct: 93
-      }
-    ];
-  }, []);
-
   // History & Nutrition State
   const [history, setHistory] = useState([]);
   const activeSessionsList = useMemo(() => {
-    return (history && Array.isArray(history) && history.length > 0) ? history : defaultSampleSessions;
-  }, [history, defaultSampleSessions]);
+    return (history && Array.isArray(history)) ? history : [];
+  }, [history]);
 
   const [historyStats, setHistoryStats] = useState(null);
   const [historyLoading, setHistoryLoading] = useState(false);
-  const [waterIntake, setWaterIntake] = useState(1.6);
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [workoutSubTab, setWorkoutSubTab] = useState('overview');
   const [trophyIndex, setTrophyIndex] = useState(0);
 
@@ -675,8 +627,9 @@ export default function App() {
 
   const calendarDaysGrid = useMemo(() => {
     const days = [];
-    const year = 2026;
-    const month = 7; // August (0-indexed)
+    const now = new Date();
+    const year = now.getFullYear();
+    const month = now.getMonth(); // 0-indexed current month
     
     const firstDay = new Date(year, month, 1);
     const startingDayOfWeek = (firstDay.getDay() + 6) % 7; // Mon=0
@@ -685,12 +638,15 @@ export default function App() {
 
     for (let i = startingDayOfWeek - 1; i >= 0; i--) {
       const d = prevMonthTotalDays - i;
-      const dateStr = `${year}-07-${String(d).padStart(2, '0')}`;
+      const prevMonthStr = String(month === 0 ? 12 : month).padStart(2, '0');
+      const prevYear = month === 0 ? year - 1 : year;
+      const dateStr = `${prevYear}-${prevMonthStr}-${String(d).padStart(2, '0')}`;
       days.push({ day: d, dateStr, isPrevMonth: true });
     }
 
+    const curMonthStr = String(month + 1).padStart(2, '0');
     for (let d = 1; d <= totalDaysInMonth; d++) {
-      const dateStr = `${year}-08-${String(d).padStart(2, '0')}`;
+      const dateStr = `${year}-${curMonthStr}-${String(d).padStart(2, '0')}`;
       const daySessions = activeSessionsList.filter(s => {
         const rawDate = s.workout_date || s.created_at || s.timestamp || s.date || '';
         return String(rawDate).startsWith(dateStr);
@@ -707,9 +663,11 @@ export default function App() {
       });
     }
 
-    const remaining = 35 - days.length;
+    const remaining = 35 - days.length > 0 ? 35 - days.length : (42 - days.length);
+    const nextMonthStr = String(month + 2 > 12 ? 1 : month + 2).padStart(2, '0');
+    const nextYear = month + 2 > 12 ? year + 1 : year;
     for (let d = 1; d <= remaining; d++) {
-      const dateStr = `${year}-09-${String(d).padStart(2, '0')}`;
+      const dateStr = `${nextYear}-${nextMonthStr}-${String(d).padStart(2, '0')}`;
       days.push({ day: d, dateStr, isNextMonth: true });
     }
 
@@ -741,7 +699,9 @@ export default function App() {
       setCalStartDate(end);
       setCalEndDate(end);
     } else if (days === 'month') {
-      setCalStartDate('2026-08-01');
+      const now = new Date();
+      const firstDay = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-01`;
+      setCalStartDate(firstDay);
       setCalEndDate(end);
     } else {
       const startObj = new Date();
@@ -778,13 +738,7 @@ export default function App() {
   // Weight tracking logs: [ { date, weight } ]
   const [weightHistory, setWeightHistory] = useState(() => {
     const saved = localStorage.getItem('burnex_weight_history');
-    const defaultLogs = [
-      { date: '2026-08-08', weight: 71.8 },
-      { date: '2026-08-10', weight: 71.0 },
-      { date: '2026-08-12', weight: 70.4 },
-      { date: '2026-08-14', weight: 70.0 }
-    ];
-    return saved ? JSON.parse(saved) : defaultLogs;
+    return saved ? JSON.parse(saved) : [];
   });
 
   // Custom user-defined foods
@@ -803,6 +757,35 @@ export default function App() {
   const [activeReplaceModal, setActiveReplaceModal] = useState(null); // { mealType, currentFood }
   const [weightInputVal, setWeightInputVal] = useState('');
   const [showWeightModal, setShowWeightModal] = useState(false);
+
+  // Burn-Ex Pro & Subscription State
+  const [isProModalOpen, setIsProModalOpen] = useState(false);
+  const [subscription, setSubscription] = useState({
+    plan: 'free',
+    status: 'inactive',
+    trial_eligible: true,
+    remaining_days: 0,
+    ai_credits_limit: 5,
+    ai_credits_used: 0,
+    ai_credits_remaining: 5,
+    is_pro: false,
+    resets_in: '12h 30m'
+  });
+
+  const fetchSubscriptionStatus = async () => {
+    if (!auth) return;
+    try {
+      const res = await authenticatedFetch(`${API_BASE}/api/subscription/status`);
+      if (res.ok) {
+        const data = await res.json();
+        if (data.status === 'success' && data.subscription) {
+          setSubscription(data.subscription);
+        }
+      }
+    } catch (err) {
+      console.error("Fetch subscription error:", err);
+    }
+  };
 
   // Telemetry Polling Ref
   const telemetryInterval = useRef(null);
@@ -890,6 +873,7 @@ export default function App() {
     if (authLoading) return;
     if (!auth) return;
     checkAndLoadProfile();
+    fetchSubscriptionStatus();
   }, [authLoading, auth]);
 
   // Personalize coach greeting message once profile resolves
@@ -912,16 +896,140 @@ export default function App() {
     chatEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [chatMessages, isChatLoading]);
 
-  // Click outside listener to close avatar dropdown
+  // Click outside and Escape key listener to close dropdowns
   useEffect(() => {
     const handleClickOutside = (e) => {
       if (avatarDropdownRef.current && !avatarDropdownRef.current.contains(e.target)) {
         setAvatarDropdownOpen(false);
       }
+      if (notifDropdownRef.current && !notifDropdownRef.current.contains(e.target)) {
+        setNotificationsOpen(false);
+      }
+    };
+    const handleKeyDown = (e) => {
+      if (e.key === 'Escape') {
+        setAvatarDropdownOpen(false);
+        setNotificationsOpen(false);
+      }
     };
     document.addEventListener('mousedown', handleClickOutside);
-    return () => document.removeEventListener('mousedown', handleClickOutside);
+    document.addEventListener('keydown', handleKeyDown);
+    return () => {
+      document.removeEventListener('mousedown', handleClickOutside);
+      document.removeEventListener('keydown', handleKeyDown);
+    };
   }, []);
+
+  // Notifications API Handlers
+  const fetchNotifications = useCallback(async () => {
+    setNotifLoading(true);
+    setNotifError(null);
+    try {
+      let res;
+      if (auth) {
+        res = await authenticatedFetch(`${API_BASE}/api/notifications`);
+      } else {
+        res = await fetch(`${API_BASE}/api/notifications`);
+      }
+      if (!res.ok) throw new Error(`HTTP error! status: ${res.status}`);
+      const data = await res.json();
+      if (data.status === 'success' && Array.isArray(data.notifications)) {
+        setNotifications(data.notifications);
+        setUnreadNotifCount(data.unread_count ?? data.notifications.filter(n => !n.read).length);
+      }
+    } catch (err) {
+      console.warn('[BX Notifications] Error fetching notifications:', err.message);
+      setNotifError('Unable to load notifications');
+      setNotifications([]);
+      setUnreadNotifCount(0);
+    } finally {
+      setNotifLoading(false);
+    }
+  }, [auth]);
+
+  useEffect(() => {
+    if (auth) {
+      fetchNotifications();
+    }
+  }, [auth, fetchNotifications]);
+
+  const handleMarkNotificationRead = async (notifId, targetView = null) => {
+    // Optimistic local state update
+    setNotifications(prev => prev.map(n => n.id === notifId ? { ...n, read: true } : n));
+    setUnreadNotifCount(prev => Math.max(0, prev - 1));
+
+    try {
+      if (auth) {
+        await authenticatedFetch(`${API_BASE}/api/notifications/${notifId}/read`, { method: 'POST' });
+      }
+    } catch (err) {
+      console.warn('[BX Notifications] Error marking read on server:', err.message);
+    }
+
+    if (targetView) {
+      handleNavClick(targetView);
+      setNotificationsOpen(false);
+    }
+  };
+
+  const handleMarkAllNotificationsRead = async () => {
+    setNotifications(prev => prev.map(n => ({ ...n, read: true })));
+    setUnreadNotifCount(0);
+
+    try {
+      if (auth) {
+        await authenticatedFetch(`${API_BASE}/api/notifications/read-all`, { method: 'POST' });
+      }
+    } catch (err) {
+      console.warn('[BX Notifications] Error marking all read on server:', err.message);
+    }
+  };
+
+  const handleDeleteNotification = async (notifId, e) => {
+    if (e) e.stopPropagation();
+    const target = notifications.find(n => n.id === notifId);
+    setNotifications(prev => prev.filter(n => n.id !== notifId));
+    if (target && !target.read) {
+      setUnreadNotifCount(prev => Math.max(0, prev - 1));
+    }
+
+    try {
+      if (auth) {
+        await authenticatedFetch(`${API_BASE}/api/notifications/${notifId}`, { method: 'DELETE' });
+      }
+    } catch (err) {
+      console.warn('[BX Notifications] Error deleting notification on server:', err.message);
+    }
+  };
+
+  const formatNotifTime = (isoString) => {
+    if (!isoString) return 'Just now';
+    try {
+      const d = new Date(isoString);
+      const diffSec = Math.floor((Date.now() - d.getTime()) / 1000);
+      if (diffSec < 60) return 'Just now';
+      if (diffSec < 3600) return `${Math.floor(diffSec / 60)}m ago`;
+      if (diffSec < 86400) return `${Math.floor(diffSec / 3600)}h ago`;
+      return `${Math.floor(diffSec / 86400)}d ago`;
+    } catch {
+      return 'Recently';
+    }
+  };
+
+  const getNotifCategoryIcon = (category) => {
+    switch (category) {
+      case 'workout':
+        return { icon: Dumbbell, color: 'text-orange-600', bg: 'bg-orange-50 border-orange-200' };
+      case 'ai':
+        return { icon: Bot, color: 'text-[#6345FF]', bg: 'bg-[#EEF0FF] border-[#DDD6FE]' };
+      case 'achievement':
+        return { icon: Trophy, color: 'text-amber-600', bg: 'bg-amber-50 border-amber-200' };
+      case 'nutrition':
+        return { icon: Utensils, color: 'text-emerald-600', bg: 'bg-emerald-50 border-emerald-200' };
+      default:
+        return { icon: Bell, color: 'text-blue-600', bg: 'bg-blue-50 border-blue-200' };
+    }
+  };
 
   // ==============================================================================
   // 2. API Access Wrappers
@@ -1067,7 +1175,8 @@ export default function App() {
         fetchWeeklyPlan(),
         fetchCircuit(),
         fetchLeaderboard(),
-        fetchHistory(true)
+        fetchHistory(true),
+        fetchSubscriptionStatus()
       ]);
 
     } catch (err) {
@@ -1113,6 +1222,7 @@ export default function App() {
       if (p.profile_completed) {
         fetchWeeklyPlan();
         fetchCircuit();
+        fetchSubscriptionStatus();
         if (view === 'login' || view === 'complete-profile') {
           setView('dashboard');
         }
@@ -1649,17 +1759,35 @@ export default function App() {
         })
       });
       if (!res.ok) {
-        throw new Error(`HTTP status ${res.status}`);
+        let serverMsg = null;
+        try {
+          const errBody = await res.json();
+          if (errBody && errBody.detail) {
+            serverMsg = typeof errBody.detail === 'string' 
+              ? errBody.detail 
+              : errBody.detail.message;
+          }
+        } catch (_) {}
+        throw new Error(serverMsg || `AI Coach is temporarily unavailable (HTTP ${res.status}). Please try again shortly.`);
       }
       const data = await res.json();
-      if (data.status === 'success' && data.reply) {
+      if (data.status === 'exhausted') {
+        setSubscription(prev => ({ ...prev, ai_credits_remaining: 0 }));
+        setChatMessages(prev => [...prev, { 
+          role: 'coach', 
+          text: data.reply || "You've used all 5 AI Coach credits for today. Your credit limit will reset tomorrow at 12:00 AM (UTC). Upgrade to Burn-Ex Pro for unlimited AI Coach access." 
+        }]);
+      } else if (data.status === 'success' && data.reply) {
+        if (data.credits_remaining !== undefined) {
+          setSubscription(prev => ({ ...prev, ai_credits_remaining: data.credits_remaining }));
+        }
         setChatMessages(prev => [...prev, { role: 'coach', text: data.reply }]);
       } else {
         throw new Error(data.detail || "Invalid response format");
       }
     } catch (err) {
       console.error("Chat error:", err);
-      setChatMessages(prev => [...prev, { role: 'coach', text: "AI Coach is temporarily unavailable. Please try again in a moment." }]);
+      setChatMessages(prev => [...prev, { role: 'coach', text: err.message || "AI Coach is temporarily unavailable. Please try again in a moment.", isError: true }]);
     } finally {
       setIsChatLoading(false);
     }
@@ -1969,20 +2097,25 @@ export default function App() {
   // RENDER: Main Application Shell
   // ==============================================================================
   const totalSess = history ? history.length : 0;
-  const userLevel = Math.floor((totalSess * 150) / 1000) + 3; // Starts at Level 3
-  const userXP = (totalSess * 150 + 560) % 1000; // Starts at 560 XP
+  const userLevel = profile?.level || (Math.floor((totalSess * 150) / 1000) + 1);
+  const userXP = profile?.xp !== undefined ? profile.xp : (totalSess * 150);
 
   // Today's workout statistics aggregator
   const todayStr = new Date().toDateString();
-  const todaySessions = history ? history.filter(s => new Date(s.timestamp).toDateString() === todayStr) : [];
-  const todayCalories = todaySessions.reduce((sum, s) => sum + (s.predicted_kcal || 0), 0);
-  const todayDurationSec = todaySessions.reduce((sum, s) => sum + (s.duration_sec || 0), 0);
+  const todaySessions = history ? history.filter(s => {
+    const raw = s.workout_date || s.created_at || s.timestamp || s.date || '';
+    if (!raw) return false;
+    return new Date(raw).toDateString() === todayStr;
+  }) : [];
+  const todayCalories = todaySessions.reduce((sum, s) => sum + (parseFloat(s.calories_burned ?? s.predicted_kcal ?? 0) || 0), 0);
+  const todayDurationSec = todaySessions.reduce((sum, s) => sum + (parseFloat(s.duration_sec ?? s.duration ?? 0) || 0), 0);
 
-  const displayCalories = todayCalories > 0 ? Math.round(todayCalories) : (history && history.length > 0 ? Math.round(history[0].predicted_kcal) : 452);
-  const displayTime = todayDurationSec > 0 ? Math.round(todayDurationSec / 60) : (history && history.length > 0 ? Math.round(history[0].duration_sec / 60) : 45);
+  const displayCalories = Math.round(todayCalories);
+  const displayTime = Math.round(todayDurationSec / 60);
   const displayMovementScore = todaySessions.length > 0 
     ? Math.round(todaySessions.reduce((sum, s) => sum + (s.form_score_pct || 0), 0) / todaySessions.length)
-    : (history && history.length > 0 ? Math.round(history[0].form_score_pct) : 82);
+    : (historyStats?.avg_form_score ? Math.round(historyStats.avg_form_score) : 0);
+  const estimatedSteps = todaySessions.reduce((sum, s) => sum + (s.total_reps ? s.total_reps * 18 : Math.round((s.duration_sec || 0) * 1.5)), 0);
 
   // BMR & Nutrition Target Calculator (Mifflin-St Jeor)
   const ageVal = parseInt(profile?.age || 23);
@@ -2282,9 +2415,12 @@ export default function App() {
   // Streak & Completion Calculator
   const getStreakData = () => {
     if (!history || history.length === 0) {
-      return { current: 12, best: 18, completedDays: [true, true, true, true, true, false, false] };
+      return { current: 0, best: 0, completedDays: [false, false, false, false, false, false, false] };
     }
-    const dates = history.map(s => new Date(s.timestamp).toDateString());
+    const dates = history.map(s => {
+      const raw = s.workout_date || s.created_at || s.timestamp || s.date || '';
+      return raw ? new Date(raw).toDateString() : '';
+    }).filter(Boolean);
     const uniqueDates = [...new Set(dates)].map(d => new Date(d));
     uniqueDates.sort((a,b) => b - a);
 
@@ -2315,41 +2451,44 @@ export default function App() {
     monday.setHours(0,0,0,0);
 
     history.forEach(s => {
-      const sDate = new Date(s.timestamp);
+      const raw = s.workout_date || s.created_at || s.timestamp || s.date || '';
+      if (!raw) return;
+      const sDate = new Date(raw);
       const diffDays = Math.floor((sDate.getTime() - monday.getTime()) / (1000 * 60 * 60 * 24));
       if (diffDays >= 0 && diffDays < 7) {
         completedDays[diffDays] = true;
       }
     });
 
-    return { current: Math.max(12, currentStreak), best: Math.max(18, currentStreak), completedDays };
+    const userBest = profile?.best_streak || currentStreak;
+    return { current: currentStreak, best: userBest, completedDays };
   };
   const streakInfo = getStreakData();
 
   // Weekly aggregate calories for chart
   const getWeeklyCalorieData = () => {
-    const daysData = [200, 450, 310, 520, 400, 680, 285]; // Default fallback baseline
-    if (!history || history.length === 0) return daysData;
+    const realDays = [0, 0, 0, 0, 0, 0, 0];
+    if (!history || history.length === 0) return realDays;
     const today = new Date();
     const distanceToMonday = today.getDay() === 0 ? 6 : today.getDay() - 1;
     const monday = new Date(today);
     monday.setDate(today.getDate() - distanceToMonday);
     monday.setHours(0,0,0,0);
 
-    const realDays = [0, 0, 0, 0, 0, 0, 0];
     history.forEach(s => {
-      const sDate = new Date(s.timestamp);
+      const raw = s.workout_date || s.created_at || s.timestamp || s.date || '';
+      if (!raw) return;
+      const sDate = new Date(raw);
       const diffDays = Math.floor((sDate.getTime() - monday.getTime()) / (1000 * 60 * 60 * 24));
       if (diffDays >= 0 && diffDays < 7) {
-        realDays[diffDays] += (s.predicted_kcal || 0);
+        realDays[diffDays] += (parseFloat(s.calories_burned ?? s.predicted_kcal ?? 0) || 0);
       }
     });
-    // Blend real data with baseline if few sessions exist
-    return realDays.map((val, idx) => val > 0 ? val : Math.round(daysData[idx] * (1 + (idx%3 - 1)*0.1)));
+    return realDays.map(val => Math.round(val));
   };
   const weeklyCalories = getWeeklyCalorieData();
   const totalWeeklyCalories = Math.round(weeklyCalories.reduce((a, b) => a + b, 0));
-  const avgFormScore = historyStats?.avg_form_score || 82;
+  const avgFormScore = historyStats?.avg_form_score || 0;
 
   // Chart coordinates mapping
   const chartHeight = 130;
@@ -2363,7 +2502,7 @@ export default function App() {
 
   // Derive active workouts count this week from history data
   const getActiveWorkoutsCountThisWeek = () => {
-    if (!history || history.length === 0) return 6;
+    if (!history || history.length === 0) return 0;
     const today = new Date();
     const distanceToMonday = today.getDay() === 0 ? 6 : today.getDay() - 1;
     const monday = new Date(today);
@@ -2372,13 +2511,15 @@ export default function App() {
 
     let count = 0;
     history.forEach(s => {
-      const sDate = new Date(s.timestamp);
+      const raw = s.workout_date || s.created_at || s.timestamp || s.date || '';
+      if (!raw) return;
+      const sDate = new Date(raw);
       const diffDays = Math.floor((sDate.getTime() - monday.getTime()) / (1000 * 60 * 60 * 24));
       if (diffDays >= 0 && diffDays < 7) {
         count++;
       }
     });
-    return count || 6;
+    return count;
   };
   const activeWorkoutsCount = getActiveWorkoutsCountThisWeek();
 
@@ -2426,257 +2567,430 @@ export default function App() {
   return (
     <div className="min-h-screen bg-slate-50 flex flex-col md:flex-row font-sans text-slate-900 select-none antialiased">
       
+      {/* Mobile Drawer Backdrop */}
+      {mobileMenuOpen && (
+        <div 
+          onClick={() => setMobileMenuOpen(false)}
+          className="fixed inset-0 bg-slate-950/40 backdrop-blur-xs z-30 md:hidden animate-in fade-in duration-200"
+        />
+      )}
+
       {/* ─── SIDEBAR NAVIGATION ─── */}
-      <aside className="w-full md:w-64 bg-white border-b md:border-b-0 md:border-r border-slate-200/80 flex flex-col flex-shrink-0 z-30 sticky top-0 md:h-screen">
-        <div className="p-5 flex items-center justify-between border-b border-slate-100/60">
-          <div className="flex items-center gap-3">
-            <div className="w-10 h-10 bg-indigo-50 border border-indigo-100 rounded-xl flex items-center justify-center text-indigo-600 shadow-sm shadow-indigo-500/10">
-              <svg width="24" height="24" viewBox="0 0 32 32" fill="none">
+      <aside className={`w-full ${sidebarCollapsed ? 'md:w-[76px]' : 'md:w-60'} bg-white border-b md:border-b-0 md:border-r border-[#E6E8F5] flex flex-col flex-shrink-0 z-40 sticky top-0 md:h-screen md:h-[100dvh] select-none transition-all duration-300 ease-in-out`}>
+        
+        {/* 1. Brand Header — Pinned at Top */}
+        <div className={`p-4 sm:p-5 pb-4 flex items-center ${sidebarCollapsed ? 'md:justify-center' : 'justify-between'} border-b border-slate-100/60 flex-shrink-0 relative`}>
+          <div className={`flex items-center gap-2.5 overflow-hidden ${sidebarCollapsed ? 'md:justify-center' : ''}`}>
+            <div className="w-9 h-9 rounded-xl flex items-center justify-center shadow-sm shadow-orange-500/15 flex-shrink-0">
+              <svg width="28" height="28" viewBox="0 0 32 32" fill="none">
                 <defs>
-                  <linearGradient id="sidebar-flame-grad" x1="16" y1="2" x2="16" y2="30" gradientUnits="userSpaceOnUse">
-                    <stop offset="0%" stopColor="#6366F1" />
-                    <stop offset="100%" stopColor="#4F46E5" />
+                  <linearGradient id="burnex-logo-grad" x1="16" y1="2" x2="16" y2="30" gradientUnits="userSpaceOnUse">
+                    <stop offset="0%" stopColor="#FF6B4A" />
+                    <stop offset="50%" stopColor="#FA5252" />
+                    <stop offset="100%" stopColor="#6345FF" />
                   </linearGradient>
                 </defs>
-                <path d="M16 2C16 2 10 9 10 15a6 6 0 0 0 6 6 6 6 0 0 0 6-6c0-3-2-6-2-6s-1 3-3 3c-1.5 0-2.5-1.5-2.5-3C14.5 7 16 2 16 2z" fill="url(#sidebar-flame-grad)" />
+                <path d="M16 2C16 2 10 9 10 15a6 6 0 0 0 6 6 6 6 0 0 0 6-6c0-3-2-6-2-6s-1 3-3 3c-1.5 0-2.5-1.5-2.5-3C14.5 7 16 2 16 2z" fill="url(#burnex-logo-grad)" />
               </svg>
             </div>
-            <div>
-              <span className="font-black text-slate-900 text-lg tracking-tight leading-none block">Burn-Ex</span>
-              <span className="text-[10px] font-semibold text-slate-400 uppercase tracking-widest leading-none mt-0.5 block">Move Better. Burn Smarter.</span>
-            </div>
+            <span className={`font-extrabold text-[#10183F] text-xl tracking-tight leading-none ${sidebarCollapsed ? 'md:hidden' : 'block'} transition-opacity duration-200`}>
+              Burn-Ex
+            </span>
           </div>
-          {/* Mobile hamburger menu toggle */}
-          <button 
-            onClick={() => setMobileMenuOpen(!mobileMenuOpen)}
-            className="md:hidden p-2 text-slate-500 hover:text-slate-800 rounded-lg hover:bg-slate-100 transition"
-            aria-label="Toggle Navigation Menu"
-          >
-            <svg width="20" height="20" fill="none" stroke="currentColor" strokeWidth="2.5" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" d="M3.75 6.75h16.5M3.75 12h16.5m-16.5 5.25h16.5" />
-            </svg>
-          </button>
+
+          <div className="flex items-center gap-1.5">
+            {/* Collapse toggle button */}
+            <button 
+              type="button"
+              onClick={() => setSidebarCollapsed(prev => !prev)}
+              className={`rounded-full hidden md:flex items-center justify-center transition-all duration-200 active:scale-95 cursor-pointer focus:outline-none focus:ring-2 focus:ring-[#6345FF]/20 ${
+                sidebarCollapsed 
+                  ? 'absolute -right-3.5 top-1/2 -translate-y-1/2 w-7 h-7 bg-white border border-[#E6E8F5] shadow-md hover:bg-[#F0F2FD] hover:border-[#DDD6FE] hover:scale-110 text-[#6345FF] z-50' 
+                  : 'w-7 h-7 bg-[#F0F2FD] hover:bg-[#E5E9FC] text-[#6345FF]'
+              }`}
+              title={sidebarCollapsed ? "Expand sidebar" : "Collapse sidebar"}
+              aria-label={sidebarCollapsed ? "Expand sidebar" : "Collapse sidebar"}
+              aria-expanded={!sidebarCollapsed}
+            >
+              {sidebarCollapsed ? <ChevronRight size={15} /> : <ChevronLeft size={15} />}
+            </button>
+
+            {/* Mobile hamburger menu toggle */}
+            <button 
+              onClick={() => setMobileMenuOpen(!mobileMenuOpen)}
+              className="md:hidden p-1.5 text-slate-500 hover:text-slate-800 rounded-lg hover:bg-slate-100 transition cursor-pointer"
+              aria-label="Toggle Navigation Menu"
+            >
+              <svg width="20" height="20" fill="none" stroke="currentColor" strokeWidth="2.5" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" d="M3.75 6.75h16.5M3.75 12h16.5m-16.5 5.25h16.5" />
+              </svg>
+            </button>
+          </div>
         </div>
-        <div className={`flex-1 flex-col justify-between p-4 ${mobileMenuOpen ? 'flex' : 'hidden md:flex'}`}>
-          <nav className="space-y-1.5">
-            {profile?.fitness_goal && [
+
+        {/* 2. Navigation Section — Independently Scrollable */}
+        <div className={`flex-1 min-h-0 overflow-y-auto p-3 ${mobileMenuOpen ? 'block' : 'hidden md:block'}`}>
+          <nav className="space-y-1">
+            {[
               { id: 'dashboard', label: 'Home', icon: Home },
               { id: 'workouts', label: 'Workouts', icon: Dumbbell },
               { id: 'progress', label: 'Progress', icon: TrendingUp },
               { id: 'analytics', label: 'Analytics', icon: BarChart3 },
               { id: 'leaderboard', label: 'Leaderboard', icon: Trophy },
               { id: 'achievements', label: 'Achievements', icon: Award },
-              { id: 'ai_coach', label: 'AI Coach', icon: Sparkles },
+              { id: 'ai_coach', label: 'AI Coach', icon: Bot },
               { id: 'nutrition', label: 'Nutrition', icon: Utensils },
               { id: 'studio', label: 'Live Studio', icon: Camera },
+              { id: 'profile', label: 'Profile', icon: User },
             ].map(tab => {
               const Icon = tab.icon;
               const isActive = view === tab.id;
               return (
                 <button
                   key={tab.id}
+                  title={tab.label}
                   onClick={() => {
                     handleNavClick(tab.id);
                     setMobileMenuOpen(false);
                   }}
-                  className={`w-full px-4 py-3 rounded-2xl text-sm font-bold flex items-center gap-3.5 transition-all duration-200 group ${
+                  className={`w-full ${sidebarCollapsed ? 'md:justify-center md:px-0 px-3.5' : 'px-3.5'} py-2.5 rounded-2xl text-xs font-bold flex items-center gap-3 transition-all duration-200 group relative cursor-pointer ${
                     isActive 
-                      ? 'bg-indigo-50/80 text-indigo-600 shadow-sm border border-indigo-100/30' 
-                      : 'text-slate-500 hover:text-slate-800 hover:bg-slate-50 border border-transparent'
+                      ? 'bg-[#EEF0FF] text-[#6345FF] shadow-xs' 
+                      : 'text-[#66729B] hover:text-[#10183F] hover:bg-[#F7F8FF]'
                   }`}
                 >
-                  <Icon size={18} className={`transition-transform duration-200 group-hover:scale-110 ${isActive ? 'text-indigo-600' : 'text-slate-400 group-hover:text-slate-600'}`} />
-                  {tab.label}
+                  <Icon size={18} className={`transition-transform duration-200 group-hover:scale-110 flex-shrink-0 ${isActive ? 'text-[#6345FF]' : 'text-[#66729B] group-hover:text-[#10183F]'}`} />
+                  <span className={`truncate ${sidebarCollapsed ? 'md:hidden' : 'block'}`}>{tab.label}</span>
+                  
+                  {/* Tooltip on collapsed state */}
+                  {sidebarCollapsed && (
+                    <div className="absolute left-full ml-2 px-2.5 py-1 bg-[#10183F] text-white text-[11px] font-bold rounded-lg shadow-lg opacity-0 pointer-events-none group-hover:opacity-100 transition-opacity duration-150 z-50 whitespace-nowrap hidden md:block">
+                      {tab.label}
+                    </div>
+                  )}
                 </button>
               );
             })}
             
-            {profile?.fitness_goal && auth?.role === 'admin' && (
+            {auth?.role === 'admin' && (
               <button
+                title="Admin Panel"
                 onClick={() => {
                   handleNavClick('admin');
                   setMobileMenuOpen(false);
                 }}
-                className={`w-full px-4 py-3 rounded-2xl text-sm font-bold flex items-center gap-3.5 transition-all duration-200 group ${
+                className={`w-full ${sidebarCollapsed ? 'md:justify-center md:px-0 px-3.5' : 'px-3.5'} py-2.5 rounded-2xl text-xs font-bold flex items-center gap-3 transition-all duration-200 group relative cursor-pointer ${
                   view === 'admin'
-                    ? 'bg-indigo-50/80 text-indigo-600 shadow-sm border border-indigo-100/30'
-                    : 'text-slate-500 hover:text-slate-800 hover:bg-slate-50 border border-transparent'
+                    ? 'bg-[#EEF0FF] text-[#6345FF] shadow-xs'
+                    : 'text-[#66729B] hover:text-[#10183F] hover:bg-[#F7F8FF]'
                 }`}
               >
-                <ShieldAlert size={18} className={view === 'admin' ? 'text-indigo-600' : 'text-slate-400'} />
-                Admin Panel
+                <ShieldAlert size={18} className={`flex-shrink-0 ${view === 'admin' ? 'text-[#6345FF]' : 'text-[#66729B]'}`} />
+                <span className={`truncate ${sidebarCollapsed ? 'md:hidden' : 'block'}`}>Admin Panel</span>
+                {sidebarCollapsed && (
+                  <div className="absolute left-full ml-2 px-2.5 py-1 bg-[#10183F] text-white text-[11px] font-bold rounded-lg shadow-lg opacity-0 pointer-events-none group-hover:opacity-100 transition-opacity duration-150 z-50 whitespace-nowrap hidden md:block">
+                    Admin Panel
+                  </div>
+                )}
               </button>
             )}
           </nav>
+        </div>
 
-          {/* Bottom Profile & Logout Section */}
-          <div className="space-y-3 pt-4 border-t border-slate-100/60 mt-auto">
-            {/* Profile Navigation Button */}
-            <button
-              onClick={() => {
-                handleNavClick('profile');
-                setProfileTab('overview');
-                setMobileMenuOpen(false);
-              }}
-              className={`w-full px-4 py-3 rounded-2xl text-sm font-bold flex items-center gap-3.5 transition-all duration-200 group ${
-                view === 'profile'
-                  ? 'bg-indigo-50/80 text-indigo-600 shadow-sm border border-indigo-100/30'
-                  : 'text-slate-500 hover:text-slate-800 hover:bg-slate-50 border border-transparent'
-              }`}
-            >
-              <User size={18} className={`transition-transform duration-200 group-hover:scale-110 ${view === 'profile' ? 'text-indigo-600' : 'text-slate-400 group-hover:text-slate-600'}`} />
-              Profile
-            </button>
-
-            {/* Interactive User Profile & XP Card */}
-            <div 
-              onClick={() => {
-                handleNavClick('profile');
-                setProfileTab('overview');
-                setMobileMenuOpen(false);
-              }}
-              className={`p-3.5 backdrop-blur-md rounded-2xl space-y-2.5 transition-all duration-200 group cursor-pointer border ${
-                view === 'profile'
-                  ? 'bg-indigo-50/90 border-indigo-200 shadow-md ring-2 ring-indigo-500/10'
-                  : 'bg-white/80 border-slate-200/70 hover:bg-slate-100/60 hover:border-indigo-200 hover:shadow-md hover:scale-[1.02]'
-              }`}
-            >
-              <div className="flex items-center gap-3">
-                {auth?.photoURL || profile?.avatar ? (
-                  <img src={auth?.photoURL || profile?.avatar} alt={auth?.name || 'User'} className="w-10 h-10 rounded-xl object-cover border border-slate-200/80 shadow-sm" />
-                ) : (
-                  <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-indigo-500 to-indigo-600 flex items-center justify-center text-white font-bold text-sm shadow-sm">
-                    {(auth?.name || 'U').charAt(0).toUpperCase()}
-                  </div>
-                )}
-                <div className="flex-1 min-w-0">
-                  <span className="font-bold text-slate-800 text-xs block leading-tight truncate">{auth?.name || profile?.name || 'Athlete'}</span>
-                  <span className="text-[10px] text-indigo-600 font-extrabold tracking-wider block uppercase mt-0.5">Level {profile?.level || 1}</span>
-                </div>
-                <ChevronRight size={16} className="text-slate-400 group-hover:text-indigo-600 group-hover:translate-x-1 transition-transform" />
-              </div>
-
-              {/* XP progress bar */}
-              <div className="space-y-1">
-                <div className="w-full bg-slate-200/70 h-1.5 rounded-full overflow-hidden">
-                  <div className="bg-gradient-to-r from-indigo-500 to-purple-600 h-full rounded-full transition-all duration-300" style={{ width: `${Math.min(100, ((profile?.xp || 0) / 1000) * 100)}%` }} />
-                </div>
-                <div className="flex justify-between text-[9px] font-bold text-slate-400">
-                  <span>{profile?.xp || 0} XP</span>
-                  <span>1000 XP</span>
-                </div>
-              </div>
+        {/* 3. Bottom Upgrade Section — Pinned at Bottom */}
+        <div className={`p-3 pt-2 border-t border-slate-100/80 bg-white flex-shrink-0 mt-auto ${mobileMenuOpen ? 'block' : 'hidden md:block'}`}>
+          {sidebarCollapsed ? (
+            <div className="hidden md:flex justify-center py-1">
+              <button
+                title="Upgrade to Burn-Ex Pro"
+                onClick={() => setIsProModalOpen(true)}
+                className="w-10 h-10 rounded-xl bg-gradient-to-br from-[#6345FF] to-[#8B5CF6] text-white flex items-center justify-center shadow-md shadow-[#6345FF]/20 hover:scale-105 transition active:scale-95 cursor-pointer"
+              >
+                <Crown size={18} />
+              </button>
             </div>
+          ) : (
+            <div className="bg-gradient-to-br from-[#F5F3FF] via-[#F8F7FF] to-[#EDE9FE] border border-[#DDD6FE]/60 rounded-2xl p-3.5 space-y-2.5 text-[#10183F] shadow-xs">
+              <div className="flex items-center gap-2">
+                <div className="w-6 h-6 rounded-lg bg-[#6345FF]/10 text-[#6345FF] flex items-center justify-center">
+                  <Crown size={14} className="text-[#6345FF]" />
+                </div>
+                <span className="font-extrabold text-xs text-[#10183F] leading-tight">
+                  Upgrade to<br /><span className="text-[#6345FF]">Burn-Ex Pro</span>
+                </span>
+              </div>
 
-            {/* Logout Button */}
-            <button
-              onClick={handleLogout}
-              className="w-full px-4 py-3 rounded-2xl text-sm font-bold text-red-600 hover:text-red-700 hover:bg-red-50/50 flex items-center gap-3.5 transition group"
-            >
-              <LogOut size={18} className="text-red-400 group-hover:text-red-600 group-hover:scale-110 transition-transform" />
-              Logout
-            </button>
-          </div>
+              <div className="space-y-1 text-[10px] font-semibold text-[#66729B]">
+                <div className="flex items-center gap-1.5"><Check size={11} className="text-[#6345FF]" /> Personalized Plans</div>
+                <div className="flex items-center gap-1.5"><Check size={11} className="text-[#6345FF]" /> AI Coach Access</div>
+                <div className="flex items-center gap-1.5"><Check size={11} className="text-[#6345FF]" /> Live Classes</div>
+                <div className="flex items-center gap-1.5"><Check size={11} className="text-[#6345FF]" /> Advanced Analytics</div>
+              </div>
+
+              <button
+                onClick={() => setIsProModalOpen(true)}
+                className="w-full py-2 bg-gradient-to-r from-[#6345FF] to-[#8B5CF6] hover:from-[#5235E8] hover:to-[#7C3AED] text-white text-xs font-bold rounded-xl shadow-sm shadow-[#6345FF]/20 flex items-center justify-center gap-1.5 transition active:scale-95 cursor-pointer"
+              >
+                Go Pro <ArrowRight size={12} />
+              </button>
+            </div>
+          )}
         </div>
       </aside>
 
       {/* ─── MAIN CONTENT CONTAINER ─── */}
-      <div className="flex-1 flex flex-col min-w-0 md:overflow-y-auto md:h-screen">
+      <div className="flex-1 flex flex-col min-w-0 md:overflow-y-auto md:h-screen bg-[#F7F8FF]">
         
-        {/* ─── TOP HEADER ─── */}
-        <header className="bg-white border-b border-slate-200/60 py-4 px-6 md:px-8 flex items-center justify-between sticky top-0 z-20">
-          <div>
-            <h1 className="text-lg md:text-xl font-black text-slate-900 tracking-tight leading-tight">
-              Hello, {auth?.name || profile?.name || 'Athlete'} 👋
-            </h1>
-            <p className="text-slate-500 text-xs mt-0.5 font-medium">Let's crush your fitness goals today!</p>
+        {/* ─── TOP HEADER BAR ─── */}
+        <header className="bg-white border-b border-[#E6E8F5] py-3.5 px-6 md:px-8 flex items-center justify-between sticky top-0 z-20 shadow-xs">
+          
+          {/* Search Bar Pill */}
+          <div className="relative w-full max-w-md hidden sm:block">
+            <Search size={16} className="absolute left-3.5 top-1/2 -translate-y-1/2 text-[#66729B]" />
+            <input 
+              type="text" 
+              placeholder="Search workouts, exercises, nutrition..."
+              className="w-full pl-9 pr-4 py-2 bg-[#F7F8FF] border border-[#E6E8F5] rounded-full text-xs font-medium text-[#10183F] placeholder-[#66729B] focus:outline-none focus:border-[#6345FF] focus:ring-2 focus:ring-[#6345FF]/10 transition"
+            />
           </div>
 
-          <div className="flex items-center gap-4">
-            {/* Notification bell icon */}
-            <button className="p-2.5 bg-slate-50 border border-slate-200/80 hover:bg-slate-100 text-slate-600 hover:text-slate-900 rounded-xl relative transition active:scale-95 shadow-sm">
-              <Bell size={18} />
-              <span className="absolute top-1 right-1 w-3.5 h-3.5 bg-red-500 border-2 border-white rounded-full flex items-center justify-center text-[8px] font-black text-white">3</span>
-            </button>
+          <div className="flex items-center gap-3.5 ml-auto">
+            {/* Notification Bell with Dynamic Popover Panel */}
+            <div className="relative" ref={notifDropdownRef}>
+              <button 
+                type="button"
+                onClick={() => {
+                  setNotificationsOpen(prev => !prev);
+                  if (!notificationsOpen && notifications.length === 0) {
+                    fetchNotifications();
+                  }
+                }}
+                aria-label="Notifications"
+                aria-expanded={notificationsOpen}
+                className={`w-9 h-9 rounded-full border flex items-center justify-center relative transition active:scale-95 shadow-xs cursor-pointer focus:outline-none focus:ring-2 focus:ring-[#6345FF]/20 ${
+                  notificationsOpen 
+                    ? 'bg-[#EEF0FF] border-[#DDD6FE] text-[#6345FF]' 
+                    : 'bg-[#F7F8FF] border-[#E6E8F5] text-[#66729B] hover:text-[#10183F] hover:bg-white'
+                }`}
+                title="Notifications"
+              >
+                <Bell size={17} />
+                {unreadNotifCount > 0 && (
+                  <span className="absolute -top-0.5 -right-0.5 min-w-[16px] h-4 px-1 bg-[#EF4444] border-2 border-white rounded-full flex items-center justify-center text-[8px] font-black text-white shadow-xs animate-in zoom-in-50">
+                    {unreadNotifCount > 9 ? '9+' : unreadNotifCount}
+                  </span>
+                )}
+              </button>
 
-            {/* User Avatar Dropdown */}
+              {/* Notifications Dropdown Panel */}
+              {notificationsOpen && (
+                <div 
+                  className="absolute right-0 mt-2 w-[calc(100vw-32px)] sm:w-96 max-w-[380px] bg-white rounded-2xl shadow-2xl border border-[#E6E8F5] z-50 overflow-hidden animate-in fade-in zoom-in-95 duration-150"
+                  role="dialog"
+                  aria-label="Notifications Panel"
+                >
+                  {/* Dropdown Header */}
+                  <div className="p-4 pb-3 border-b border-slate-100 flex items-center justify-between bg-gradient-to-r from-white via-[#F7F8FF] to-white">
+                    <div className="flex items-center gap-2">
+                      <span className="font-extrabold text-[#10183F] text-sm">Notifications</span>
+                      {unreadNotifCount > 0 && (
+                        <span className="px-2 py-0.5 bg-[#6345FF]/10 text-[#6345FF] text-[10px] font-black rounded-full">
+                          {unreadNotifCount} new
+                        </span>
+                      )}
+                    </div>
+
+                    {unreadNotifCount > 0 && (
+                      <button
+                        type="button"
+                        onClick={handleMarkAllNotificationsRead}
+                        className="text-[11px] font-bold text-[#6345FF] hover:text-[#5235E8] flex items-center gap-1 transition cursor-pointer"
+                      >
+                        <CheckCheck size={13} />
+                        <span>Mark all read</span>
+                      </button>
+                    )}
+                  </div>
+
+                  {/* Dropdown Body */}
+                  <div className="max-h-[380px] overflow-y-auto divide-y divide-slate-100/80">
+                    {notifLoading && notifications.length === 0 ? (
+                      <div className="py-10 flex flex-col items-center justify-center text-slate-400 gap-2">
+                        <Loader2 size={24} className="animate-spin text-[#6345FF]" />
+                        <span className="text-xs font-semibold">Loading alerts...</span>
+                      </div>
+                    ) : notifications.length === 0 ? (
+                      <div className="py-10 px-6 text-center">
+                        <div className="w-12 h-12 rounded-2xl bg-[#F0F2FD] text-[#6345FF] mx-auto flex items-center justify-center mb-3">
+                          <Bell size={22} className="opacity-60" />
+                        </div>
+                        <h4 className="text-xs font-black text-[#10183F] mb-1">No notifications yet</h4>
+                        <p className="text-[11px] text-[#66729B] leading-relaxed">
+                          You're all caught up! Check back after your next workout for new form feedback and insights.
+                        </p>
+                      </div>
+                    ) : (
+                      notifications.map((item) => {
+                        const { icon: CategoryIcon, color, bg } = getNotifCategoryIcon(item.category);
+                        const isUnread = !item.read;
+
+                        return (
+                          <div
+                            key={item.id}
+                            onClick={() => handleMarkNotificationRead(item.id, item.target_view)}
+                            className={`p-3.5 flex items-start gap-3 transition cursor-pointer group ${
+                              isUnread ? 'bg-[#F8F9FF] hover:bg-[#EFF2FF]' : 'bg-white hover:bg-[#F8F9FA]'
+                            }`}
+                          >
+                            {/* Category Icon Badge */}
+                            <div className={`w-8 h-8 rounded-xl border flex items-center justify-center flex-shrink-0 mt-0.5 ${bg} ${color}`}>
+                              <CategoryIcon size={15} />
+                            </div>
+
+                            {/* Content */}
+                            <div className="flex-1 min-w-0 pr-1">
+                              <div className="flex items-center justify-between gap-1 mb-0.5">
+                                <h5 className={`text-xs truncate ${isUnread ? 'font-extrabold text-[#10183F]' : 'font-semibold text-slate-700'}`}>
+                                  {item.title}
+                                </h5>
+                                <span className="text-[10px] text-slate-400 flex-shrink-0 font-medium">
+                                  {formatNotifTime(item.created_at)}
+                                </span>
+                              </div>
+                              <p className="text-[11px] text-[#66729B] leading-relaxed line-clamp-2">
+                                {item.message}
+                              </p>
+                            </div>
+
+                            {/* Unread Indicator Dot & Dismiss */}
+                            <div className="flex flex-col items-center gap-1.5 flex-shrink-0 mt-1">
+                              {isUnread && (
+                                <span className="w-2 h-2 rounded-full bg-[#6345FF] shadow-xs" />
+                              )}
+                              <button
+                                type="button"
+                                onClick={(e) => handleDeleteNotification(item.id, e)}
+                                className="opacity-0 group-hover:opacity-100 p-1 text-slate-300 hover:text-red-500 hover:bg-red-50 rounded-md transition"
+                                title="Dismiss notification"
+                              >
+                                <Trash2 size={12} />
+                              </button>
+                            </div>
+                          </div>
+                        );
+                      })
+                    )}
+                  </div>
+
+                  {/* Dropdown Footer */}
+                  <div className="p-2.5 bg-slate-50/80 border-t border-slate-100 flex items-center justify-between text-[11px] px-4">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setProfileTab('notifications');
+                        handleNavClick('profile');
+                        setNotificationsOpen(false);
+                      }}
+                      className="font-bold text-[#66729B] hover:text-[#10183F] flex items-center gap-1 transition cursor-pointer"
+                    >
+                      <span>Notification Preferences</span>
+                      <ArrowRight size={11} />
+                    </button>
+
+                    {notifications.length > 0 && (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          fetchNotifications();
+                        }}
+                        className="font-semibold text-slate-400 hover:text-[#6345FF] transition cursor-pointer flex items-center gap-1"
+                        title="Refresh notifications"
+                      >
+                        <RotateCcw size={11} className={notifLoading ? 'animate-spin' : ''} />
+                        <span>Sync</span>
+                      </button>
+                    )}
+                  </div>
+                </div>
+              )}
+            </div>
+
+            {/* User Avatar & Name Dropdown */}
             <div className="relative" ref={avatarDropdownRef}>
               <button 
                 onClick={() => setAvatarDropdownOpen(!avatarDropdownOpen)}
-                className="flex items-center gap-2 p-1 pl-1.5 pr-2.5 rounded-xl border border-slate-200/80 hover:border-indigo-300 bg-slate-50/60 hover:bg-indigo-50/40 transition active:scale-95 shadow-sm"
+                className="flex items-center gap-2.5 p-1 pl-1.5 pr-2.5 rounded-full border border-[#E6E8F5] bg-white hover:bg-[#F7F8FF] transition active:scale-95 shadow-xs"
               >
                 {auth?.photoURL || profile?.avatar ? (
-                  <img src={auth?.photoURL || profile?.avatar} alt={auth?.name} className="w-8 h-8 rounded-lg object-cover border border-slate-200" />
+                  <img src={auth?.photoURL || profile?.avatar} alt={auth?.name || 'Sanjai R'} className="w-8 h-8 rounded-full object-cover border border-[#E6E8F5]" />
                 ) : (
-                  <div className="w-8 h-8 rounded-lg bg-indigo-600 flex items-center justify-center text-white font-bold text-xs shadow-sm">
-                    {(auth?.name || 'U').charAt(0).toUpperCase()}
+                  <div className="w-8 h-8 rounded-full bg-gradient-to-br from-[#6345FF] to-[#8B5CF6] flex items-center justify-center text-white font-bold text-xs shadow-xs">
+                    {(auth?.name || profile?.name || 'S').charAt(0).toUpperCase()}
                   </div>
                 )}
-                <span className="text-xs font-bold text-slate-700 hidden sm:inline">{auth?.name || profile?.name || 'Athlete'}</span>
-                <ChevronDown size={14} className={`text-slate-400 transition-transform duration-200 ${avatarDropdownOpen ? 'rotate-180 text-indigo-600' : ''}`} />
+                <div className="text-left hidden sm:block leading-none pr-1">
+                  <span className="text-xs font-bold text-[#10183F] block leading-tight">{auth?.name || profile?.name || 'Sanjai R'}</span>
+                  <span className={`text-[10px] font-semibold block mt-0.5 ${subscription.is_pro ? 'text-[#6345FF] font-bold' : (subscription.status === 'active' && subscription.plan === 'trial' ? 'text-indigo-600 font-bold' : 'text-[#66729B]')}`}>
+                    {subscription.is_pro ? 'Burn-Ex Pro' : (subscription.status === 'active' && subscription.plan === 'trial' ? `Pro Trial (${subscription.remaining_days || 0}d)` : 'Free Plan')}
+                  </span>
+                </div>
+                <ChevronDown size={14} className={`text-[#66729B] transition-transform duration-200 ${avatarDropdownOpen ? 'rotate-180 text-[#6345FF]' : ''}`} />
               </button>
 
               {/* Dropdown Menu */}
               {avatarDropdownOpen && (
-                <div className="absolute right-0 mt-2 w-56 bg-white/95 backdrop-blur-md rounded-2xl shadow-xl border border-slate-200/80 py-2 z-50 animate-in fade-in slide-in-from-top-2 duration-150">
+                <div className="absolute right-0 mt-2 w-56 bg-white rounded-2xl shadow-xl border border-[#E6E8F5] py-2 z-50 animate-in fade-in duration-150">
                   <div className="px-4 py-2.5 border-b border-slate-100">
-                    <p className="text-xs font-black text-slate-800 truncate">{auth?.name || profile?.name || 'Athlete'}</p>
-                    <p className="text-[10px] font-semibold text-slate-400 truncate">{auth?.email || profile?.email || 'athlete@burnex.app'}</p>
+                    <p className="text-xs font-black text-[#10183F] truncate">{auth?.name || profile?.name || 'Sanjai R'}</p>
+                    <p className="text-[10px] font-semibold text-[#66729B] truncate">{auth?.email || profile?.email || 'sanjair@burnex.app'}</p>
                   </div>
                   
                   <div className="py-1">
+                    {!subscription.is_pro && (
+                      <button
+                        onClick={() => {
+                          setIsProModalOpen(true);
+                          setAvatarDropdownOpen(false);
+                        }}
+                        className="w-full px-4 py-2.5 text-xs font-bold text-[#6345FF] hover:bg-[#F5F3FF] flex items-center gap-2.5 transition"
+                      >
+                        <Crown size={15} className="text-[#6345FF]" />
+                        Upgrade to Pro
+                      </button>
+                    )}
+
                     <button
                       onClick={() => {
-                        const t0 = performance.now();
                         setView('profile');
                         setProfileTab('overview');
                         setAvatarDropdownOpen(false);
-                        console.log(`[BX Performance] Dropdown 'My Profile' in ${Math.round(performance.now() - t0)}ms`);
                       }}
-                      className="w-full px-4 py-2.5 text-xs font-bold text-slate-700 hover:text-indigo-600 hover:bg-indigo-50/60 flex items-center gap-2.5 transition"
+                      className="w-full px-4 py-2.5 text-xs font-bold text-[#10183F] hover:text-[#6345FF] hover:bg-[#EEF0FF]/60 flex items-center gap-2.5 transition"
                     >
-                      <User size={15} className="text-slate-400 group-hover:text-indigo-600" />
+                      <User size={15} className="text-[#66729B]" />
                       My Profile
                     </button>
 
                     <button
                       onClick={() => {
-                        const t0 = performance.now();
                         setView('progress');
                         setAvatarDropdownOpen(false);
-                        console.log(`[BX Performance] Dropdown 'Progress' in ${Math.round(performance.now() - t0)}ms`);
                       }}
-                      className="w-full px-4 py-2.5 text-xs font-bold text-slate-700 hover:text-indigo-600 hover:bg-indigo-50/60 flex items-center gap-2.5 transition"
+                      className="w-full px-4 py-2.5 text-xs font-bold text-[#10183F] hover:text-[#6345FF] hover:bg-[#EEF0FF]/60 flex items-center gap-2.5 transition"
                     >
-                      <TrendingUp size={15} className="text-slate-400 group-hover:text-indigo-600" />
+                      <TrendingUp size={15} className="text-[#66729B]" />
                       Progress
                     </button>
 
                     <button
                       onClick={() => {
-                        const t0 = performance.now();
                         setView('leaderboard');
                         setAvatarDropdownOpen(false);
-                        console.log(`[BX Performance] Dropdown 'Leaderboard' in ${Math.round(performance.now() - t0)}ms`);
                       }}
-                      className="w-full px-4 py-2.5 text-xs font-bold text-slate-700 hover:text-indigo-600 hover:bg-indigo-50/60 flex items-center gap-2.5 transition"
+                      className="w-full px-4 py-2.5 text-xs font-bold text-[#10183F] hover:text-[#6345FF] hover:bg-[#EEF0FF]/60 flex items-center gap-2.5 transition"
                     >
-                      <Trophy size={15} className="text-slate-400 group-hover:text-indigo-600" />
+                      <Trophy size={15} className="text-[#66729B]" />
                       Leaderboard
-                    </button>
-
-                    <button
-                      onClick={() => {
-                        const t0 = performance.now();
-                        setView('profile');
-                        setProfileTab('account');
-                        setAvatarDropdownOpen(false);
-                        console.log(`[BX Performance] Dropdown 'Settings' in ${Math.round(performance.now() - t0)}ms`);
-                      }}
-                      className="w-full px-4 py-2.5 text-xs font-bold text-slate-700 hover:text-indigo-600 hover:bg-indigo-50/60 flex items-center gap-2.5 transition"
-                    >
-                      <Sliders size={15} className="text-slate-400 group-hover:text-indigo-600" />
-                      Settings
                     </button>
                   </div>
 
@@ -2882,460 +3196,600 @@ export default function App() {
             </div>
           )}
 
-          {/* HOME / DASHBOARD VIEW */}
+          {/* HOME / DASHBOARD VIEW — EXACT MATCH TO REFERENCE IMAGE */}
           {view === 'dashboard' && (
             <div className="space-y-6 fade-in">
               
-              {/* PROFILE SUMMARY CARD */}
-              <div className="card-elevated bg-white p-5 flex flex-col sm:flex-row items-center gap-6 rounded-2xl">
-                {auth?.photoURL ? (
-                  <img src={auth.photoURL} alt={auth.name} className="w-16 h-16 rounded-2xl object-cover border border-slate-200" />
-                ) : (
-                  <div className="w-16 h-16 rounded-2xl bg-gradient-to-br from-indigo-500 to-indigo-600 flex items-center justify-center text-white font-extrabold text-xl shadow-md">
-                    {(auth?.name || 'U').charAt(0).toUpperCase()}
-                  </div>
-                )}
-                <div className="flex-1 grid grid-cols-2 md:grid-cols-5 gap-4 w-full text-center sm:text-left">
-                  <div>
-                    <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block">Age</span>
-                    <strong className="text-slate-800 text-sm font-black mt-0.5 block">{profile?.age || 23} Years</strong>
-                  </div>
-                  <div>
-                    <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block">Date of Birth</span>
-                    <strong className="text-slate-800 text-sm font-black mt-0.5 block">15 Aug {2026 - (profile?.age || 23)}</strong>
-                  </div>
-                  <div>
-                    <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block">Height</span>
-                    <strong className="text-slate-800 text-sm font-black mt-0.5 block">{profile?.height_cm || 175} cm</strong>
-                  </div>
-                  <div>
-                    <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block">Weight</span>
-                    <strong className="text-slate-800 text-sm font-black mt-0.5 block">{profile?.weight_kg || 68} kg</strong>
-                  </div>
-                  <div className="col-span-2 md:col-span-1">
-                    <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block">Goal</span>
-                    <strong className="text-emerald-600 text-sm font-black mt-0.5 block flex items-center justify-center sm:justify-start gap-1">
-                      {currentGoalMeta.title}
-                      <span className="text-[10px] text-slate-400 font-semibold">(-5 kg target)</span>
-                    </strong>
-                  </div>
-                </div>
-              </div>
-
-              {/* USER PROGRESSION & RANK BANNER */}
-              <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-                {/* Level Card */}
-                <div className="card-elevated bg-white p-5 rounded-2xl flex items-center justify-between border border-slate-100">
-                  <div className="flex items-center gap-3.5">
-                    <div className="w-12 h-12 bg-indigo-50 border border-indigo-100 text-indigo-600 rounded-xl flex items-center justify-center font-black text-xl shadow-sm">
-                      {profile?.level || 1}
+              {/* ROW 1: WELCOME HERO (65%) + TODAY'S PROGRESS (35%) */}
+              <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-stretch">
+                
+                {/* Welcome Hero Card (Span 8) */}
+                <div className="lg:col-span-8 bg-gradient-to-br from-[#FFFFFF] via-[#F8F9FE] to-[#EEF0FF] border border-[#E6E8F5] rounded-3xl p-6 md:p-8 relative overflow-hidden flex flex-col justify-between shadow-xs min-h-[260px]">
+                  
+                  {/* Floating Streak Badges Top Right */}
+                  <div className="absolute top-6 right-6 flex items-center gap-3 z-10">
+                    {/* Streak Pill */}
+                    <div className="bg-white border border-[#E6E8F5] px-3.5 py-1.5 rounded-2xl flex items-center gap-2 shadow-xs">
+                      <Flame size={16} className="text-[#FF6B4A]" fill="#FF6B4A" />
+                      <div className="leading-tight">
+                        <span className="text-xs font-black text-[#10183F] block">{streakInfo?.current || 0}</span>
+                        <span className="text-[9px] font-bold text-[#66729B] uppercase block leading-none">Day Streak</span>
+                      </div>
                     </div>
-                    <div>
-                      <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block">Progression Level</span>
-                      <strong className="text-slate-800 text-sm font-black block mt-0.5">Level {profile?.level || 1}</strong>
+
+                    {/* Discipline Speech Bubble */}
+                    <div className="hidden sm:flex bg-gradient-to-r from-[#6345FF] to-[#8B5CF6] text-white px-3.5 py-2 rounded-2xl text-[11px] font-bold shadow-md shadow-[#6345FF]/20 items-center gap-1.5">
+                      <span>Discipline today Stronger tomorrow 💪</span>
                     </div>
                   </div>
-                  <div className="text-right">
-                    <span className="text-[9px] bg-indigo-50 text-indigo-600 font-extrabold px-2.5 py-1 rounded-lg uppercase tracking-wider">Active Status</span>
-                  </div>
-                </div>
 
-                {/* XP Progress Bar */}
-                <div className="card-elevated bg-white p-5 rounded-2xl flex flex-col justify-center border border-slate-100 md:col-span-2 space-y-2">
-                  <div className="flex justify-between items-center text-xs font-bold text-slate-500">
-                    <span className="flex items-center gap-1.5"><Sparkles size={13} className="text-indigo-500" /> XP progress: {profile?.xp || 0} XP</span>
-                    <span>Next Level: {((profile?.level || 1) ** 2) * 100} XP</span>
+                  {/* Hero Left Content */}
+                  <div className="relative z-10 max-w-md space-y-2">
+                    <span className="text-xs font-bold text-[#66729B]">
+                      {new Date().getHours() < 12 ? 'Good Morning,' : (new Date().getHours() < 18 ? 'Good Afternoon,' : 'Good Evening,')}
+                    </span>
+                    <h1 className="text-2xl md:text-3xl font-black text-[#10183F] tracking-tight leading-tight">
+                      {auth?.name || profile?.name || 'Athlete'} 👋
+                    </h1>
+                    <p className="text-xs font-semibold text-[#66729B] leading-relaxed max-w-sm pt-1">
+                      Stay consistent, keep going, and be the best version of yourself!
+                    </p>
                   </div>
-                  <div className="w-full h-3 bg-slate-100 rounded-full overflow-hidden border border-slate-200/50 p-[1px]">
-                    <div 
-                      className="h-full bg-gradient-to-r from-indigo-500 to-purple-600 rounded-full transition-all duration-500"
-                      style={{
-                        width: `${(() => {
-                          const lvl = profile?.level || 1;
-                          const xp = profile?.xp || 0;
-                          const prevMin = (lvl - 1) ** 2 * 100;
-                          const nextMin = lvl ** 2 * 100;
-                          const diff = nextMin - prevMin;
-                          return diff > 0 ? Math.min(100, Math.max(0, ((xp - prevMin) / diff) * 100)) : 0;
-                        })()}%`
+
+                  {/* Hero CTA Action Buttons */}
+                  <div className="relative z-10 flex items-center gap-3 pt-6">
+                    <button 
+                      onClick={() => {
+                        pendingExerciseRef.current = 'squat';
+                        setIsPreWorkoutModalOpen(true);
                       }}
+                      className="px-5 py-2.5 bg-[#6345FF] hover:bg-[#5235E8] text-white text-xs font-bold rounded-xl shadow-md shadow-[#6345FF]/25 transition flex items-center gap-2 active:scale-95"
+                    >
+                      Start Workout <ArrowRight size={14} />
+                    </button>
+                    <button 
+                      onClick={() => handleNavClick('workouts')}
+                      className="px-5 py-2.5 bg-[#EEF0FF] hover:bg-[#E0E4FC] text-[#6345FF] text-xs font-bold rounded-xl transition active:scale-95"
+                    >
+                      View Plan
+                    </button>
+                  </div>
+
+                  {/* Athlete Image on Right Side */}
+                  <div className="absolute right-0 bottom-0 pointer-events-none z-0 hidden sm:block">
+                    <img 
+                      src="/athlete_hero.jpg" 
+                      alt="Burn-Ex Athlete" 
+                      className="w-48 md:w-56 lg:w-64 object-contain max-h-[250px] opacity-95 drop-shadow-sm" 
                     />
                   </div>
-                  <div className="flex justify-between items-center text-[10px] text-slate-400 font-bold">
-                    <span>Rank: #{leaderboard.find(x => x.user_id === auth?.uid)?.rank || '-'} on Global Leaderboard</span>
-                    <span>{((profile?.level || 1) ** 2) * 100 - (profile?.xp || 0)} XP needed to level up</span>
-                  </div>
                 </div>
+
+                {/* Today's Progress Card (Span 4) */}
+                <div className="lg:col-span-4 bg-white border border-[#E6E8F5] rounded-3xl p-6 flex flex-col justify-between shadow-xs">
+                  <h3 className="text-sm font-black text-[#10183F]">Today's Progress</h3>
+
+                  {(() => {
+                    const progressPercent = Math.min(100, Math.round((displayCalories / 500) * 100));
+                    const circumference = 289;
+                    const strokeOffset = circumference - (circumference * (progressPercent / 100));
+
+                    return (
+                      <div className="flex items-center gap-5 my-3">
+                        {/* Circular Progress Ring */}
+                        <div className="relative w-28 h-28 flex items-center justify-center flex-shrink-0">
+                          <svg width="112" height="112" viewBox="0 0 112 112" className="transform -rotate-90">
+                            <circle cx="56" cy="56" r="46" fill="none" stroke="#F1F3FD" strokeWidth="8" />
+                            <circle 
+                              cx="56" 
+                              cy="56" 
+                              r="46" 
+                              fill="none" 
+                              stroke="url(#progress-ring-grad)" 
+                              strokeWidth="8" 
+                              strokeDasharray="289" 
+                              strokeDashoffset={strokeOffset} 
+                              strokeLinecap="round" 
+                              className="transition-all duration-500" 
+                            />
+                            <defs>
+                              <linearGradient id="progress-ring-grad" x1="0" y1="0" x2="1" y2="0">
+                                <stop offset="0%" stopColor="#8B5CF6" />
+                                <stop offset="100%" stopColor="#6345FF" />
+                              </linearGradient>
+                            </defs>
+                          </svg>
+                          <div className="absolute flex flex-col items-center">
+                            <span className="text-xl font-black text-[#10183F]">{progressPercent}%</span>
+                          </div>
+                        </div>
+
+                        {/* Progress Metric Bars */}
+                        <div className="flex-1 space-y-3">
+                          {/* Calories */}
+                          <div className="space-y-1">
+                            <div className="flex items-center justify-between text-[10px]">
+                              <span className="flex items-center gap-1 font-bold text-[#66729B]">
+                                <Flame size={12} className="text-[#FF6B4A]" /> Calories
+                              </span>
+                              <span className="font-extrabold text-[#10183F]">{displayCalories} / 500 kcal</span>
+                            </div>
+                            <div className="w-full bg-[#F1F3FD] h-1.5 rounded-full overflow-hidden">
+                              <div className="bg-[#FF6B4A] h-full rounded-full transition-all duration-500" style={{ width: `${Math.min(100, (displayCalories / 500) * 100)}%` }} />
+                            </div>
+                          </div>
+
+                          {/* Steps */}
+                          <div className="space-y-1">
+                            <div className="flex items-center justify-between text-[10px]">
+                              <span className="flex items-center gap-1 font-bold text-[#66729B]">
+                                <Footprints size={12} className="text-[#6345FF]" /> Steps
+                              </span>
+                              <span className="font-extrabold text-[#10183F]">{estimatedSteps.toLocaleString()} / 10,000</span>
+                            </div>
+                            <div className="w-full bg-[#F1F3FD] h-1.5 rounded-full overflow-hidden">
+                              <div className="bg-[#6345FF] h-full rounded-full transition-all duration-500" style={{ width: `${Math.min(100, (estimatedSteps / 10000) * 100)}%` }} />
+                            </div>
+                          </div>
+
+                          {/* Active Time */}
+                          <div className="space-y-1">
+                            <div className="flex items-center justify-between text-[10px]">
+                              <span className="flex items-center gap-1 font-bold text-[#66729B]">
+                                <Clock size={12} className="text-[#34C98B]" /> Active Time
+                              </span>
+                              <span className="font-extrabold text-[#10183F]">{displayTime} / 60 min</span>
+                            </div>
+                            <div className="w-full bg-[#F1F3FD] h-1.5 rounded-full overflow-hidden">
+                              <div className="bg-[#34C98B] h-full rounded-full transition-all duration-500" style={{ width: `${Math.min(100, (displayTime / 60) * 100)}%` }} />
+                            </div>
+                          </div>
+                        </div>
+                      </div>
+                    );
+                  })()}
+                </div>
+
               </div>
 
-              {/* MIDDLE ROW GRID: Today's Overview & Daily Nutrition Summary */}
-              <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+              {/* ROW 2: 4 FITNESS METRIC CARDS */}
+              <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
                 
-                {/* TODAY'S OVERVIEW CARDS */}
-                <div className="lg:col-span-2 space-y-4">
-                  <div className="flex items-center justify-between">
-                    <h3 className="text-xs font-black text-slate-400 uppercase tracking-wider flex items-center gap-1.5">
-                      <Calendar size={14} className="text-indigo-500" /> Today's Overview
-                    </h3>
-                    <button onClick={() => handleNavClick('progress')} className="text-[11px] font-bold text-indigo-600 hover:text-indigo-800 hover:underline transition">View Details</button>
+                {/* 1. Calories Burned */}
+                <div className="bg-[#FFF7F4] border border-[#FFE7DE] p-4 rounded-2xl flex items-center gap-3.5 shadow-xs">
+                  <div className="w-11 h-11 rounded-xl bg-[#FFECE4] text-[#FF6B4A] flex items-center justify-center flex-shrink-0">
+                    <Flame size={20} fill="#FF6B4A" />
                   </div>
-                  
-                  <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-                    {/* Calories Burned */}
-                    <div className="card-elevated bg-white p-5 flex flex-col justify-between h-[130px] rounded-2xl">
-                      <div className="flex items-center justify-between">
-                        <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Calories Burned</span>
-                        <div className="w-8 h-8 rounded-lg bg-orange-50 text-orange-500 flex items-center justify-center"><Flame size={16} /></div>
+                  <div>
+                    <strong className="text-xl font-black text-[#10183F] block leading-none">{displayCalories}</strong>
+                    <span className="text-[11px] font-semibold text-[#66729B] block mt-1">Calories Burned</span>
+                  </div>
+                </div>
+
+                {/* 2. Steps */}
+                <div className="bg-[#F0F6FF] border border-[#DEEDFF] p-4 rounded-2xl flex items-center gap-3.5 shadow-xs">
+                  <div className="w-11 h-11 rounded-xl bg-[#E0EFFF] text-[#5685FF] flex items-center justify-center flex-shrink-0">
+                    <Footprints size={20} />
+                  </div>
+                  <div>
+                    <strong className="text-xl font-black text-[#10183F] block leading-none">{estimatedSteps.toLocaleString()}</strong>
+                    <span className="text-[11px] font-semibold text-[#66729B] block mt-1">Steps</span>
+                  </div>
+                </div>
+
+                {/* 3. Active Minutes */}
+                <div className="bg-[#F0FDF4] border border-[#DCFCE7] p-4 rounded-2xl flex items-center gap-3.5 shadow-xs">
+                  <div className="w-11 h-11 rounded-xl bg-[#DCFCE7] text-[#34C98B] flex items-center justify-center flex-shrink-0">
+                    <Clock size={20} />
+                  </div>
+                  <div>
+                    <strong className="text-xl font-black text-[#10183F] block leading-none">{displayTime}</strong>
+                    <span className="text-[11px] font-semibold text-[#66729B] block mt-1">Active Minutes</span>
+                  </div>
+                </div>
+
+                {/* 4. Workouts This Week */}
+                <div className="bg-[#F5F3FF] border border-[#EDE9FE] p-4 rounded-2xl flex items-center gap-3.5 shadow-xs">
+                  <div className="w-11 h-11 rounded-xl bg-[#EDE9FE] text-[#8B5CF6] flex items-center justify-center flex-shrink-0">
+                    <Dumbbell size={20} />
+                  </div>
+                  <div>
+                    <strong className="text-xl font-black text-[#10183F] block leading-none">{activeWorkoutsCount}</strong>
+                    <span className="text-[11px] font-semibold text-[#66729B] block mt-1">Workouts This Week</span>
+                  </div>
+                </div>
+
+              </div>
+
+              {/* SUBSCRIPTION TRIAL / EXPIRED STATUS BANNER */}
+              {subscription?.status === 'active' && subscription?.plan === 'trial' && (
+                <div className="bg-white border border-[#E6E8F5] rounded-3xl p-5 md:p-6 shadow-xs animate-in fade-in">
+                  <div className="flex items-center justify-between mb-3">
+                    <div className="flex items-center gap-3">
+                      <div className="w-10 h-10 rounded-2xl bg-[#F5F3FF] border border-[#DDD6FE]/60 text-[#6345FF] flex items-center justify-center flex-shrink-0">
+                        <Crown size={20} />
                       </div>
                       <div>
-                        <strong className="text-2xl font-black text-slate-900 tracking-tight leading-none">{displayCalories}</strong>
-                        <span className="text-xs text-slate-400 font-bold ml-1">kcal</span>
-                        <span className="text-[10px] text-emerald-600 font-bold flex items-center gap-0.5 mt-1.5"><TrendingUp size={10} /> 12% vs yesterday</span>
+                        <h4 className="text-sm font-black text-[#10183F] leading-tight">Burn-Ex Pro Trial</h4>
+                        <p className="text-xs font-bold text-[#6345FF] mt-0.5">{subscription.remaining_days || 0} days remaining</p>
                       </div>
                     </div>
+                    <span className="px-3 py-1 bg-emerald-50 border border-emerald-200 text-emerald-600 rounded-full text-[10px] font-black uppercase tracking-wider">
+                      Active
+                    </span>
+                  </div>
 
-                    {/* Workout Time */}
-                    <div className="card-elevated bg-white p-5 flex flex-col justify-between h-[130px] rounded-2xl">
-                      <div className="flex items-center justify-between">
-                        <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Workout Time</span>
-                        <div className="w-8 h-8 rounded-lg bg-purple-50 text-purple-500 flex items-center justify-center"><Clock size={16} /></div>
+                  {/* Progress Bar */}
+                  <div className="w-full bg-[#F1F3FD] h-2 rounded-full overflow-hidden mb-3">
+                    <div 
+                      className="bg-gradient-to-r from-[#6345FF] to-[#8B5CF6] h-full rounded-full transition-all duration-500" 
+                      style={{ width: `${Math.max(5, Math.min(100, ((30 - (subscription.remaining_days || 0)) / 30) * 100))}%` }} 
+                    />
+                  </div>
+
+                  <div className="flex flex-col sm:flex-row sm:items-center justify-between text-[11px] text-[#66729B] font-semibold border-b border-slate-100 pb-3 mb-3 gap-1">
+                    <span>Started on <strong className="text-[#10183F]">{subscription.trial_started_at ? new Date(subscription.trial_started_at).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }) : 'Today'}</strong></span>
+                    <span>Expires on <strong className="text-[#10183F]">{subscription.trial_expires_at ? new Date(subscription.trial_expires_at).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }) : 'In 30 Days'}</strong></span>
+                  </div>
+
+                  <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                    <div className="flex items-center gap-2.5">
+                      <div className="w-7 h-7 rounded-lg bg-indigo-50 text-[#6345FF] flex items-center justify-center flex-shrink-0">
+                        <Brain size={15} />
                       </div>
                       <div>
-                        <strong className="text-2xl font-black text-slate-900 tracking-tight leading-none">{displayTime}</strong>
-                        <span className="text-xs text-slate-400 font-bold ml-1">min</span>
-                        <span className="text-[10px] text-emerald-600 font-bold flex items-center gap-0.5 mt-1.5"><TrendingUp size={10} /> 8% vs yesterday</span>
+                        <span className="text-[10px] font-bold text-[#66729B] block leading-tight">AI Coach Credits (Today)</span>
+                        <span className="text-xs font-black text-[#10183F]">{subscription.ai_credits_remaining ?? 5} / 5 credits remaining</span>
                       </div>
                     </div>
+                    <div className="text-[11px] font-bold text-[#66729B] flex items-center gap-1.5">
+                      <Clock size={13} className="text-[#6345FF]" />
+                      <span>Resets at 00:00 UTC</span>
+                    </div>
+                  </div>
+                </div>
+              )}
 
-                    {/* Average Heart Rate */}
-                    <div className="card-elevated bg-white p-5 flex flex-col justify-between h-[130px] rounded-2xl">
-                      <div className="flex items-center justify-between">
-                        <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Avg. Heart Rate</span>
-                        <div className="w-8 h-8 rounded-lg bg-red-50 text-red-500 flex items-center justify-center"><Heart size={16} /></div>
+              {subscription?.status === 'expired' && (
+                <div className="bg-white border border-amber-200/80 rounded-3xl p-5 md:p-6 shadow-xs relative overflow-hidden animate-in fade-in">
+                  <div className="flex items-start justify-between">
+                    <div className="flex items-center gap-3.5">
+                      <div className="w-11 h-11 rounded-2xl bg-amber-500/10 border border-amber-500/20 text-amber-600 flex items-center justify-center flex-shrink-0">
+                        <Crown size={22} />
                       </div>
                       <div>
-                        <strong className="text-2xl font-black text-slate-900 tracking-tight leading-none">128</strong>
-                        <span className="text-xs text-slate-400 font-bold ml-1">bpm</span>
-                        <span className="text-[10px] text-red-500 font-bold flex items-center gap-0.5 mt-1.5">▼ 4% vs yesterday</span>
+                        <div className="flex items-center gap-2">
+                          <h4 className="text-sm md:text-base font-black text-[#10183F]">Trial Expired</h4>
+                          <span className="px-2 py-0.5 bg-amber-100 text-amber-800 rounded-md text-[9px] font-black uppercase">
+                            Expired
+                          </span>
+                        </div>
+                        <p className="text-xs text-[#66729B] font-medium mt-1 max-w-lg">
+                          Your 30-day Burn-Ex Pro trial has ended. Subscribe now to continue using AI Coach and other Pro features.
+                        </p>
                       </div>
                     </div>
+                  </div>
 
-                    {/* Movement Score */}
-                    <div className="card-elevated bg-white p-5 flex flex-col justify-between h-[130px] rounded-2xl">
-                      <div className="flex items-center justify-between">
-                        <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Movement Score</span>
-                        <div className="w-8 h-8 rounded-lg bg-emerald-50 text-emerald-500 flex items-center justify-center"><Activity size={16} /></div>
+                  <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 text-xs font-bold text-[#10183F] my-4 pt-2 border-t border-slate-100">
+                    <div className="flex items-center gap-1.5"><Check size={13} className="text-[#6345FF]" /> Unlimited AI Coach</div>
+                    <div className="flex items-center gap-1.5"><Check size={13} className="text-[#6345FF]" /> Advanced Analytics</div>
+                    <div className="flex items-center gap-1.5"><Check size={13} className="text-[#6345FF]" /> Personalized Plans</div>
+                    <div className="flex items-center gap-1.5"><Check size={13} className="text-[#6345FF]" /> Live Classes & More</div>
+                  </div>
+
+                  <button
+                    onClick={() => setIsProModalOpen(true)}
+                    className="w-full py-2.5 bg-gradient-to-r from-[#6345FF] to-[#8B5CF6] hover:from-[#5235E8] hover:to-[#7C3AED] text-white text-xs font-black rounded-xl shadow-md shadow-[#6345FF]/20 flex items-center justify-center gap-2 transition active:scale-95"
+                  >
+                    <Crown size={14} /> Subscribe to Pro (₹499/month)
+                  </button>
+                </div>
+              )}
+
+              {/* ROW 3: RECOMMENDED WORKOUT (1/3) + WEEKLY ACTIVITY (1/3) + AI COACH (1/3) */}
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+                
+                {/* 1. Recommended Workout Card */}
+                <div className="bg-white border border-[#E6E8F5] rounded-3xl p-5 flex flex-col justify-between shadow-xs">
+                  <div className="flex items-center justify-between mb-3">
+                    <h3 className="text-xs font-black text-[#10183F]">Recommended Workout</h3>
+                    <button onClick={() => handleNavClick('workouts')} className="text-[11px] font-bold text-[#6345FF] hover:underline flex items-center gap-0.5">
+                      View All →
+                    </button>
+                  </div>
+
+                  <div className="relative rounded-2xl overflow-hidden min-h-[175px] flex flex-col justify-between p-4 bg-slate-900 text-white shadow-xs">
+                    <img 
+                      src="/workout_squat.jpg" 
+                      alt="Recommended Workout" 
+                      className="absolute inset-0 w-full h-full object-cover opacity-60" 
+                    />
+                    <div className="absolute inset-0 bg-gradient-to-t from-slate-950/90 via-slate-950/40 to-transparent" />
+
+                    <div className="relative z-10">
+                      <span className="inline-block bg-white/20 backdrop-blur-md px-2.5 py-0.5 rounded-md text-[10px] font-bold uppercase tracking-wider">
+                        Full Body
+                      </span>
+                    </div>
+
+                    <div className="relative z-10 space-y-2">
+                      <h4 className="font-extrabold text-base leading-tight text-white">Full Body Strength</h4>
+                      <div className="flex items-center gap-3 text-[11px] text-slate-200 font-semibold">
+                        <span className="flex items-center gap-1"><Clock size={12} /> 30 min</span>
+                        <span>·</span>
+                        <span className="flex items-center gap-1"><User size={12} /> Beginner</span>
                       </div>
-                      <div>
-                        <strong className="text-2xl font-black text-slate-900 tracking-tight leading-none">{displayMovementScore}</strong>
-                        <span className="text-xs text-slate-400 font-bold ml-1">/100</span>
-                        <span className="text-[10px] text-emerald-600 font-bold flex items-center gap-0.5 mt-1.5"><TrendingUp size={10} /> 7% vs yesterday</span>
-                      </div>
+                      <button 
+                        onClick={() => {
+                          pendingExerciseRef.current = 'squat';
+                          setIsPreWorkoutModalOpen(true);
+                        }}
+                        className="w-fit px-4 py-1.5 bg-[#6345FF] hover:bg-[#5235E8] text-white text-xs font-bold rounded-xl shadow-xs transition flex items-center gap-1.5 active:scale-95"
+                      >
+                        Start Workout →
+                      </button>
                     </div>
                   </div>
                 </div>
 
-                {/* DAILY NUTRITION SUMMARY CARD */}
-                <div className="space-y-4">
-                  <div className="flex items-center justify-between">
-                    <h3 className="text-xs font-black text-slate-400 uppercase tracking-wider flex items-center gap-1.5">
-                      <Utensils size={14} className="text-indigo-500" /> Daily Nutrition Summary
-                    </h3>
-                    <button onClick={() => handleNavClick('nutrition')} className="text-[11px] font-bold text-indigo-600 hover:text-indigo-800 hover:underline transition">View Plan</button>
+                {/* 2. Your Weekly Activity Bar Chart */}
+                <div className="bg-white border border-[#E6E8F5] rounded-3xl p-5 flex flex-col justify-between shadow-xs">
+                  <div className="flex items-center justify-between mb-2">
+                    <h3 className="text-xs font-black text-[#10183F]">Your Weekly Activity</h3>
+                    <div className="flex items-center gap-1 text-[11px] font-bold text-[#66729B] bg-[#F7F8FF] px-2 py-0.5 rounded-lg border border-[#E6E8F5]">
+                      <span>Calories</span>
+                      <ChevronDown size={12} />
+                    </div>
                   </div>
 
-                  <div className="card-elevated bg-white p-5 rounded-2xl flex flex-col justify-between h-[276px]">
-                    <div className="flex items-center justify-between gap-4">
-                      {/* Calorie circle */}
-                      <div className="relative w-28 h-28 flex items-center justify-center flex-shrink-0">
-                        <svg width="112" height="112" viewBox="0 0 112 112" className="transform -rotate-90">
-                          <circle cx="56" cy="56" r="48" fill="none" stroke="#F1F5F9" strokeWidth="8" />
-                          <circle cx="56" cy="56" r="48" fill="none" stroke="url(#dash-circle-grad)" strokeWidth="8" strokeDasharray="301.6" strokeDashoffset={301.6 - (301.6 * Math.min(1, 1580 / dailyCalorieTarget))} strokeLinecap="round" className="transition-all duration-500" />
-                          <defs>
-                            <linearGradient id="dash-circle-grad" x1="0" y1="0" x2="1" y2="0">
-                              <stop offset="0%" stopColor="#8B5CF6" />
-                              <stop offset="100%" stopColor="#6366F1" />
-                            </linearGradient>
-                          </defs>
-                        </svg>
-                        <div className="absolute flex flex-col items-center">
-                          <span className="text-xl font-black text-slate-900 leading-none">1580</span>
-                          <span className="text-[8px] text-slate-400 font-bold uppercase mt-1">kcal</span>
-                          <span className="text-[8px] text-slate-400">of {dailyCalorieTarget}</span>
-                        </div>
-                      </div>
+                  {/* 7-Day Bar Chart */}
+                  <div className="flex items-end justify-between gap-2 h-36 pt-4 pb-2 px-1">
+                    {(() => {
+                      const maxCal = Math.max(...weeklyCalories.map(b => b.val), 500);
+                      return weeklyCalories.map((bar, idx) => {
+                        const pct = bar.val > 0 ? Math.min(100, Math.max(12, Math.round((bar.val / maxCal) * 100))) : 0;
+                        return (
+                          <div key={idx} className="flex-1 flex flex-col items-center gap-1.5 h-full justify-end group">
+                            <div className="w-full max-w-[28px] bg-[#F0F2FD] rounded-t-lg relative flex items-end h-[100px] overflow-hidden" title={`${bar.day}: ${bar.val} kcal`}>
+                              <div 
+                                className="w-full bg-gradient-to-t from-[#6345FF] to-[#8B5CF6] rounded-t-lg transition-all duration-500 group-hover:brightness-110" 
+                                style={{ height: `${pct}%` }} 
+                              />
+                            </div>
+                            <span className="text-[10px] font-bold text-[#66729B] group-hover:text-[#6345FF] transition">{bar.day}</span>
+                          </div>
+                        );
+                      });
+                    })()}
+                  </div>
+                </div>
 
-                      {/* Macros checklist */}
-                      <div className="flex-1 space-y-2">
-                        <div className="flex justify-between items-center text-[10px] font-bold">
-                          <span className="flex items-center gap-1.5 text-slate-600"><span className="w-2 h-2 rounded-full bg-emerald-500" /> Carbs</span>
-                          <span className="text-slate-400">45% <span className="font-semibold text-slate-500">(178g)</span></span>
+                {/* 3. AI Coach Card */}
+                <div className="bg-white border border-[#E6E8F5] rounded-3xl p-5 flex flex-col justify-between shadow-xs">
+                  <div>
+                    <div className="flex items-center justify-between mb-2">
+                      <div className="flex items-center gap-2">
+                        <div className="w-7 h-7 rounded-lg bg-[#EEF0FF] text-[#6345FF] flex items-center justify-center">
+                          <Bot size={16} />
                         </div>
-                        <div className="flex justify-between items-center text-[10px] font-bold">
-                          <span className="flex items-center gap-1.5 text-slate-600"><span className="w-2 h-2 rounded-full bg-indigo-500" /> Protein</span>
-                          <span className="text-slate-400">30% <span className="font-semibold text-slate-500">(118g)</span></span>
-                        </div>
-                        <div className="flex justify-between items-center text-[10px] font-bold">
-                          <span className="flex items-center gap-1.5 text-slate-600"><span className="w-2 h-2 rounded-full bg-amber-500" /> Fats</span>
-                          <span className="text-slate-400">25% <span className="font-semibold text-slate-500">(56g)</span></span>
-                        </div>
+                        <h3 className="text-xs font-black text-[#10183F]">AI Coach</h3>
                       </div>
+                      <button 
+                        onClick={() => handleNavClick('ai_coach')}
+                        className="text-[10px] font-bold text-[#6345FF] bg-[#EEF0FF] hover:bg-[#E0E4FC] px-2.5 py-1 rounded-xl transition"
+                      >
+                        Try Now
+                      </button>
                     </div>
+                    <p className="text-[11px] text-[#66729B] leading-relaxed">
+                      Get personalized workout suggestions, nutrition tips and real-time guidance.
+                    </p>
+                  </div>
 
-                    {/* Water intake tracker */}
-                    <div className="space-y-2 mt-4 pt-4 border-t border-slate-100/60">
-                      <div className="flex items-center justify-between text-xs font-bold text-slate-600">
-                        <span className="flex items-center gap-1.5"><Droplet size={14} className="text-blue-500" /> Water Intake</span>
-                        <span>{waterIntake.toFixed(1)} / 2.5 L</span>
-                      </div>
-                      <div className="flex items-center gap-3">
-                        <div className="flex-1 bg-slate-100 h-2.5 rounded-full overflow-hidden">
-                          <div className="bg-blue-500 h-full rounded-full transition-all duration-300" style={{ width: `${Math.min(100, (waterIntake / 2.5) * 100)}%` }} />
-                        </div>
-                        <button 
-                          onClick={() => setWaterIntake(prev => Math.min(5, prev + 0.25))}
-                          className="w-8 h-8 rounded-lg bg-blue-50 hover:bg-blue-100 text-blue-600 text-sm font-bold flex items-center justify-center transition-all active:scale-95 border border-blue-100"
+                  {/* 3 Prompt Pills */}
+                  <div className="space-y-1.5 pt-3">
+                    {[
+                      { prompt: "Suggest a workout for today", icon: Zap },
+                      { prompt: "Give me a nutrition plan", icon: Utensils },
+                      { prompt: "How can I improve my stamina?", icon: Sparkles }
+                    ].map((item, idx) => {
+                      const Icon = item.icon;
+                      return (
+                        <button
+                          key={idx}
+                          onClick={() => {
+                            handleNavClick('ai_coach');
+                            handleSendChatMessage(item.prompt);
+                          }}
+                          className="w-full px-3 py-2 bg-[#F7F8FF] hover:bg-[#EEF0FF] border border-[#E6E8F5] rounded-xl text-left text-[11px] font-bold text-[#10183F] hover:text-[#6345FF] transition flex items-center gap-2 active:scale-98"
                         >
-                          +
+                          <Icon size={13} className="text-[#6345FF] flex-shrink-0" />
+                          <span className="truncate">{item.prompt}</span>
                         </button>
-                      </div>
-                    </div>
+                      );
+                    })}
                   </div>
                 </div>
+
               </div>
 
-              {/* BOTTOM ROW: Today's Activity & Weekly Progress & Goal Progress */}
-              <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+              {/* ROW 4: NUTRITION OVERVIEW (1/3) + ACHIEVEMENTS (1/3) + LEADERBOARD (1/3) */}
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
                 
-                {/* TODAY'S ACTIVITY */}
-                <div className="space-y-4">
-                  <div className="flex items-center justify-between">
-                    <h3 className="text-xs font-black text-slate-400 uppercase tracking-wider flex items-center gap-1.5">
-                      <Activity size={14} className="text-indigo-500" /> Today's Activity
-                    </h3>
-                    <button onClick={() => handleNavClick('progress')} className="text-[11px] font-bold text-indigo-600 hover:text-indigo-800 hover:underline transition">View All</button>
+                {/* 1. Nutrition Overview */}
+                <div className="bg-white border border-[#E6E8F5] rounded-3xl p-5 flex flex-col justify-between shadow-xs">
+                  <div className="flex items-center justify-between mb-2">
+                    <h3 className="text-xs font-black text-[#10183F]">Nutrition Overview</h3>
+                    <button onClick={() => handleNavClick('nutrition')} className="text-[11px] font-bold text-[#6345FF] hover:underline flex items-center gap-0.5">
+                      View All →
+                    </button>
                   </div>
 
-                  <div className="card-elevated bg-white p-4 rounded-2xl space-y-3.5 h-[340px] overflow-y-auto">
-                    {todaySessions.length === 0 ? (
-                      <div className="h-full flex flex-col items-center justify-center text-center p-6 text-slate-400 text-xs">
-                        <Activity size={24} className="mb-2 text-slate-300" />
-                        No activities logged today. Completed circuits will appear here.
-                      </div>
-                    ) : (
-                      todaySessions.map((act, idx) => (
-                        <div key={idx} className="flex items-center justify-between p-3 bg-slate-50 border border-slate-100 rounded-xl transition hover:border-slate-200">
-                          <div className="flex items-center gap-3">
-                            <div className="w-8 h-8 bg-indigo-50 text-indigo-600 border border-indigo-100 rounded-lg flex items-center justify-center text-xs font-black">
-                              {(act.exercise_name || 'EX').substring(0, 2).toUpperCase()}
-                            </div>
-                            <div>
-                              <span className="font-bold text-slate-800 text-sm block leading-none">{act.exercise_name || 'Exercise'}</span>
-                              <span className="text-[10px] text-slate-400 font-semibold block mt-1">{act.total_reps} reps · {Math.round(act.duration_sec)}s</span>
-                            </div>
+                  {(() => {
+                    const totalMacroGrams = (consumedProtein || 0) + (consumedCarbs || 0) + (consumedFat || 0);
+                    const proteinPct = totalMacroGrams > 0 ? Math.round(((consumedProtein || 0) / totalMacroGrams) * 100) : 0;
+                    const carbsPct = totalMacroGrams > 0 ? Math.round(((consumedCarbs || 0) / totalMacroGrams) * 100) : 0;
+                    const fatsPct = totalMacroGrams > 0 ? Math.max(0, 100 - proteinPct - carbsPct) : 0;
+
+                    return (
+                      <div className="flex items-center justify-between gap-4 my-2">
+                        {/* Donut SVG Ring */}
+                        <div className="relative w-28 h-28 flex items-center justify-center flex-shrink-0">
+                          <svg width="104" height="104" viewBox="0 0 104 104" className="transform -rotate-90">
+                            {/* Background track */}
+                            <circle cx="52" cy="52" r="42" fill="none" stroke="#F1F3FD" strokeWidth="9" />
+                            {consumedCalories > 0 && (
+                              <>
+                                <circle 
+                                  cx="52" 
+                                  cy="52" 
+                                  r="42" 
+                                  fill="none" 
+                                  stroke="#6345FF" 
+                                  strokeWidth="9" 
+                                  strokeDasharray="264" 
+                                  strokeDashoffset={264 - (264 * (proteinPct / 100))} 
+                                  strokeLinecap="round" 
+                                />
+                                <circle 
+                                  cx="52" 
+                                  cy="52" 
+                                  r="42" 
+                                  fill="none" 
+                                  stroke="#FFAB38" 
+                                  strokeWidth="9" 
+                                  strokeDasharray="264" 
+                                  strokeDashoffset={264 - (264 * (carbsPct / 100))} 
+                                  className="rotate-120 origin-center" 
+                                  strokeLinecap="round" 
+                                />
+                                <circle 
+                                  cx="52" 
+                                  cy="52" 
+                                  r="42" 
+                                  fill="none" 
+                                  stroke="#34C98B" 
+                                  strokeWidth="9" 
+                                  strokeDasharray="264" 
+                                  strokeDashoffset={264 - (264 * (fatsPct / 100))} 
+                                  className="rotate-240 origin-center" 
+                                  strokeLinecap="round" 
+                                />
+                              </>
+                            )}
+                          </svg>
+                          <div className="absolute text-center">
+                            <strong className="text-sm font-black text-[#10183F] block leading-none">{consumedCalories.toLocaleString()}</strong>
+                            <span className="text-[9px] font-bold text-[#66729B] uppercase block mt-0.5">kcal</span>
                           </div>
-                          <div className="text-right">
-                            <span className="text-xs font-bold text-slate-800 block">{Math.round(act.predicted_kcal)} kcal</span>
-                            <span className={`inline-block text-[9px] font-black uppercase px-2 py-0.5 rounded-md mt-1 ${
-                              act.form_score_pct >= 85 ? 'bg-emerald-50 text-emerald-600 border border-emerald-100' : 'bg-amber-50 text-amber-600 border border-amber-100'
-                            }`}>
-                              {act.form_score_pct >= 85 ? 'Good Form' : 'Average'}
+                        </div>
+
+                        {/* Macro Percentages */}
+                        <div className="flex-1 space-y-2 text-xs font-bold text-[#10183F]">
+                          <div className="flex items-center justify-between">
+                            <span className="flex items-center gap-1.5 text-[#66729B] font-semibold text-[11px]">
+                              <span className="w-2.5 h-2.5 rounded-full bg-[#6345FF]" /> Protein
                             </span>
+                            <span>{consumedCalories > 0 ? `${proteinPct}% (${consumedProtein}g)` : '0g'}</span>
                           </div>
+                          <div className="flex items-center justify-between">
+                            <span className="flex items-center gap-1.5 text-[#66729B] font-semibold text-[11px]">
+                              <span className="w-2.5 h-2.5 rounded-full bg-[#FFAB38]" /> Carbs
+                            </span>
+                            <span>{consumedCalories > 0 ? `${carbsPct}% (${consumedCarbs}g)` : '0g'}</span>
+                          </div>
+                          <div className="flex items-center justify-between">
+                            <span className="flex items-center gap-1.5 text-[#66729B] font-semibold text-[11px]">
+                              <span className="w-2.5 h-2.5 rounded-full bg-[#34C98B]" /> Fats
+                            </span>
+                            <span>{consumedCalories > 0 ? `${fatsPct}% (${consumedFat}g)` : '0g'}</span>
+                          </div>
+                        </div>
+                      </div>
+                    );
+                  })()}
+                </div>
+
+                {/* 2. Achievements Preview */}
+                <div className="bg-white border border-[#E6E8F5] rounded-3xl p-5 flex flex-col justify-between shadow-xs">
+                  <div className="flex items-center justify-between mb-2">
+                    <h3 className="text-xs font-black text-[#10183F]">Achievements</h3>
+                    <button onClick={() => handleNavClick('achievements')} className="text-[11px] font-bold text-[#6345FF] hover:underline flex items-center gap-0.5">
+                      View All →
+                    </button>
+                  </div>
+
+                  <div className="grid grid-cols-4 gap-2 my-2 text-center">
+                    {achievementsLoading ? (
+                      <div className="col-span-4 py-4 text-center text-xs text-[#66729B] font-bold">Loading...</div>
+                    ) : achievements.length === 0 ? (
+                      <div className="col-span-4 py-4 text-center text-xs text-[#66729B] font-semibold">No achievements yet</div>
+                    ) : (
+                      achievements.slice(0, 4).map((ach, idx) => (
+                        <div key={ach.id || idx} className="flex flex-col items-center gap-1.5" title={ach.description || ach.name}>
+                          <div className={`w-12 h-12 rounded-2xl border flex items-center justify-center shadow-xs ${
+                            ach.unlocked 
+                              ? 'bg-[#FFF5F2] border-[#FFE7DE] text-[#FF6B4A]' 
+                              : 'bg-[#F8F9FE] border-[#E6E8F5] text-[#94A3B8] opacity-60'
+                          }`}>
+                            {idx === 0 ? <Flame size={20} fill={ach.unlocked ? "#FF6B4A" : "none"} /> :
+                             idx === 1 ? <Calendar size={18} /> :
+                             idx === 2 ? <Star size={18} fill={ach.unlocked ? "#FFAB38" : "none"} className={ach.unlocked ? "text-[#FFAB38]" : ""} /> :
+                             <Award size={18} />}
+                          </div>
+                          <span className="text-[9px] font-bold text-[#10183F] leading-tight truncate max-w-[65px]">{ach.name}</span>
                         </div>
                       ))
                     )}
                   </div>
                 </div>
 
-                {/* WEEKLY PROGRESS */}
-                <div className="space-y-4">
-                  <div className="flex items-center justify-between">
-                    <h3 className="text-xs font-black text-slate-400 uppercase tracking-wider flex items-center gap-1.5">
-                      <TrendingUp size={14} className="text-indigo-500" /> Weekly Progress
-                    </h3>
-                    <select className="bg-transparent border-none text-[11px] font-black text-slate-400 focus:outline-none cursor-pointer">
-                      <option>This Week</option>
-                    </select>
+                {/* 3. Leaderboard Preview */}
+                <div className="bg-white border border-[#E6E8F5] rounded-3xl p-5 flex flex-col justify-between shadow-xs">
+                  <div className="flex items-center justify-between mb-2">
+                    <h3 className="text-xs font-black text-[#10183F]">Leaderboard</h3>
+                    <button onClick={() => handleNavClick('leaderboard')} className="text-[11px] font-bold text-[#6345FF] hover:underline flex items-center gap-0.5">
+                      View All →
+                    </button>
                   </div>
 
-                  <div className="card-elevated bg-white p-5 rounded-2xl flex flex-col justify-between h-[340px]">
-                    <span className="text-[10px] font-semibold text-slate-400 uppercase">kcal</span>
-                    {/* SVG line chart */}
-                    <div className="w-full flex-1 flex items-center justify-center my-3">
-                      <svg viewBox="0 0 380 130" className="w-full h-full overflow-visible">
-                        <defs>
-                          <linearGradient id="chart-area-grad" x1="0" y1="0" x2="0" y2="1">
-                            <stop offset="0%" stopColor="#6366F1" stopOpacity="0.2" />
-                            <stop offset="100%" stopColor="#6366F1" stopOpacity="0" />
-                          </linearGradient>
-                        </defs>
-                        <line x1="30" y1="20" x2="350" y2="20" stroke="#F8FAFC" strokeWidth="1" />
-                        <line x1="30" y1="50" x2="350" y2="50" stroke="#F8FAFC" strokeWidth="1" />
-                        <line x1="30" y1="80" x2="350" y2="80" stroke="#F8FAFC" strokeWidth="1" />
-                        <line x1="30" y1="110" x2="350" y2="110" stroke="#F1F5F9" strokeWidth="1.5" />
-
-                        {chartPath && (
-                          <>
-                            <path d={chartPath} fill="none" stroke="#6366F1" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round" />
-                            <path d={`${chartPath} L ${chartPoints[chartPoints.length - 1].x} 110 L ${chartPoints[0].x} 110 Z`} fill="url(#chart-area-grad)" />
-                          </>
-                        )}
-
-                        {chartPoints.map((p, idx) => (
-                          <g key={idx} className="group cursor-pointer">
-                            <circle cx={p.x} cy={p.y} r="4" fill="white" stroke="#6366F1" strokeWidth="2.5" />
-                            {/* Hover tooltip */}
-                            <g className="opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none">
-                              <rect x={p.x - 30} y={p.y - 30} width="60" height="20" rx="5" fill="#0F172A" />
-                              <text x={p.x} y={p.y - 17} fill="white" fontSize="9" fontWeight="bold" textAnchor="middle">{Math.round(p.val)}k</text>
-                            </g>
-                          </g>
-                        ))}
-                      </svg>
-                    </div>
-
-                    <div className="grid grid-cols-3 gap-2 text-center pt-3 border-t border-slate-100/60">
-                      <div>
-                        <span className="text-[9px] font-bold text-slate-400 uppercase block">Total Calories</span>
-                        <strong className="text-slate-800 text-sm font-black mt-0.5 block">{totalWeeklyCalories} kcal</strong>
-                      </div>
-                      <div>
-                        <span className="text-[9px] font-bold text-slate-400 uppercase block">Total Workouts</span>
-                        <strong className="text-slate-800 text-sm font-black mt-0.5 block">{activeWorkoutsCount || 6}</strong>
-                      </div>
-                      <div>
-                        <span className="text-[9px] font-bold text-slate-400 uppercase block">Avg. Score</span>
-                        <strong className="text-slate-800 text-sm font-black mt-0.5 block">{Math.round(avgFormScore)} / 100</strong>
-                      </div>
-                    </div>
-                  </div>
-                </div>
-
-                {/* GOAL PROGRESS & ACHIEVEMENT CAROUSEL */}
-                <div className="space-y-4">
-                  <div className="flex items-center justify-between">
-                    <h3 className="text-xs font-black text-slate-400 uppercase tracking-wider flex items-center gap-1.5">
-                      <Target size={14} className="text-indigo-500" /> Goal Progress
-                    </h3>
-                    <button onClick={() => { handleNavClick('profile'); setProfileTab('preferences'); }} className="text-[11px] font-bold text-indigo-600 hover:text-indigo-800 hover:underline transition">Edit Goal</button>
-                  </div>
-
-                  <div className="space-y-4">
-                    {/* Goal Progress Card */}
-                    <div className="card-elevated bg-white p-5 rounded-2xl flex flex-col justify-between h-[148px]">
-                      <div>
-                        <span className="text-[10px] font-semibold text-slate-400 uppercase block">Weight Loss Goal</span>
-                        <strong className="text-slate-800 text-xl font-black mt-1 block">-5 kg</strong>
-                      </div>
-                      <div className="space-y-2">
-                        <div className="w-full bg-slate-100 h-2.5 rounded-full overflow-hidden">
-                          <div className="bg-indigo-500 h-full rounded-full transition-all duration-300" style={{ width: '68%' }} />
-                        </div>
-                        <div className="flex items-center justify-between text-[10px] font-bold text-slate-400">
-                          <span>Current · {profile?.weight_kg || 68} kg</span>
-                          <span className="text-indigo-600">68%</span>
-                          <span>Target · {parseFloat(profile?.weight_kg || 68) - 5} kg</span>
-                        </div>
-                      </div>
-                    </div>
-
-                    {/* Achievement Carousel Card */}
-                    <div className="card-elevated bg-white p-5 rounded-2xl flex flex-col justify-between h-[148px]">
-                      <div className="flex gap-4">
-                        <div className="w-10 h-10 rounded-xl bg-amber-50 border border-amber-200 flex items-center justify-center flex-shrink-0 text-amber-500 shadow-sm">
-                          <Trophy size={20} className="animate-bounce" />
-                        </div>
-                        <div className="flex-1 min-w-0">
-                          {trophyIndex === 0 && (
-                            <>
-                              <h4 className="font-bold text-slate-800 text-xs mb-1">Consistency King!</h4>
-                              <p className="text-slate-400 text-[10px] leading-relaxed">You've logged {totalSess} sessions total. Keep up the amazing work!</p>
-                            </>
-                          )}
-                          {trophyIndex === 1 && (
-                            <>
-                              <h4 className="font-bold text-slate-800 text-xs mb-1">Perfect Form Streak</h4>
-                              <p className="text-slate-400 text-[10px] leading-relaxed">Your average movement score is {Math.round(avgFormScore)}%! Technique is outstanding.</p>
-                            </>
-                          )}
-                          {trophyIndex === 2 && (
-                            <>
-                              <h4 className="font-bold text-slate-800 text-xs mb-1">Active Week!</h4>
-                              <p className="text-slate-400 text-[10px] leading-relaxed">You completed {activeWorkoutsCount || 6} workouts this week. Energy levels are high!</p>
-                            </>
-                          )}
-                        </div>
-                      </div>
-                      <div className="flex justify-center gap-1.5 mt-2">
-                        {[0, 1, 2].map((idx) => (
-                          <button 
-                            key={idx} 
-                            onClick={() => setTrophyIndex(idx)} 
-                            className={`w-1.5 h-1.5 rounded-full transition-all duration-300 ${trophyIndex === idx ? 'w-4 bg-indigo-600' : 'bg-slate-300 hover:bg-slate-400'}`} 
-                          />
-                        ))}
-                      </div>
-                    </div>
-                  </div>
-                </div>
-              </div>
-
-              {/* FOOTER ROW: AI Insight & Streak & Next Workout */}
-              <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 pt-2">
-                
-                {/* AI INSIGHT */}
-                <div className="card-elevated bg-white p-5 rounded-2xl flex items-center justify-between gap-4">
-                  <div className="flex gap-3.5">
-                    <div className="w-10 h-10 rounded-xl bg-indigo-50 border border-indigo-100 flex items-center justify-center flex-shrink-0 text-indigo-600 shadow-sm"><Sparkles size={18} /></div>
-                    <div>
-                      <span className="text-[10px] font-bold text-indigo-600 uppercase block">AI Insight</span>
-                      <p className="text-slate-600 text-xs font-semibold mt-1 max-w-[220px] leading-relaxed">Your form is improving! Keep focusing on full range of motion.</p>
-                    </div>
-                  </div>
-                  <button className="px-3.5 py-2 border border-indigo-100 hover:bg-indigo-50 text-indigo-600 text-xs font-bold rounded-xl transition active:scale-95">View Tips</button>
-                </div>
-
-                {/* STREAK */}
-                <div className="card-elevated bg-white p-5 rounded-2xl flex flex-col justify-between gap-4">
-                  <div className="flex items-center justify-between">
-                    <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block">Streak</span>
-                    <span className="text-[10px] text-slate-400 font-bold block">Best: {streakInfo.best} days</span>
-                  </div>
-                  <div className="flex items-center justify-between gap-4 flex-1">
-                    <div className="flex items-baseline gap-1">
-                      <span className="text-2xl font-black text-slate-900 tracking-tight leading-none">{streakInfo.current}</span>
-                      <span className="text-xs text-slate-400 font-bold">days</span>
-                    </div>
-                    {/* Calendar circles */}
-                    <div className="flex items-center gap-1.5">
-                      {['M','T','W','T','F','S','S'].map((day, idx) => (
-                        <div key={idx} className="flex flex-col items-center gap-1">
-                          <span className="text-[9px] text-slate-400 font-bold">{day}</span>
-                          <div className={`w-5 h-5 rounded-full flex items-center justify-center text-[9px] font-black transition border ${
-                            streakInfo.completedDays[idx] 
-                              ? 'bg-emerald-500 border-emerald-500 text-white shadow-sm' 
-                              : 'bg-slate-50 border-slate-200 text-slate-300'
+                  <div className="space-y-2 my-1">
+                    {leaderboardLoading ? (
+                      <div className="py-4 text-center text-xs text-[#66729B] font-bold">Loading rankings...</div>
+                    ) : leaderboard.length === 0 ? (
+                      <div className="py-4 text-center text-xs text-[#66729B] font-semibold">No leaderboard rankings yet</div>
+                    ) : (
+                      leaderboard.slice(0, 3).map((item, idx) => {
+                        const isMe = item.user_id === (auth?.uid || profile?.id) || item.is_current_user;
+                        const rankBadgeColor = idx === 0 ? 'bg-[#FEF3C7] text-[#D97706]' : idx === 1 ? 'bg-[#E2E8F0] text-[#475569]' : 'bg-[#FFEDD5] text-[#EA580C]';
+                        return (
+                          <div key={item.user_id || idx} className={`flex items-center justify-between p-2 rounded-xl transition ${
+                            isMe ? 'bg-[#EEF0FF] border border-[#DDD6FE]/60' : 'bg-[#F7F8FF] hover:bg-[#EEF0FF]/50'
                           }`}>
-                            {streakInfo.completedDays[idx] ? '✓' : ''}
+                            <div className="flex items-center gap-2.5">
+                              <span className={`w-5 h-5 rounded-full text-[10px] font-black flex items-center justify-center ${rankBadgeColor}`}>
+                                {item.rank || idx + 1}
+                              </span>
+                              <div className={`w-7 h-7 rounded-full flex items-center justify-center text-[10px] font-black overflow-hidden ${
+                                isMe ? 'bg-[#6345FF] text-white' : 'bg-slate-200 text-slate-700'
+                              }`}>
+                                {item.avatar ? (
+                                  <img src={item.avatar} alt={item.name} className="w-full h-full object-cover" />
+                                ) : (
+                                  (item.name || 'U').charAt(0).toUpperCase()
+                                )}
+                              </div>
+                              <span className={`text-xs font-bold truncate max-w-[110px] ${isMe ? 'text-[#6345FF]' : 'text-[#10183F]'}`}>
+                                {isMe ? `You (${item.name || auth?.name || 'Athlete'})` : (item.name || 'Athlete')}
+                              </span>
+                            </div>
+                            <span className="text-xs font-black text-[#6345FF]">{(item.points || item.score || 0).toLocaleString()} pts</span>
                           </div>
-                        </div>
-                      ))}
-                    </div>
+                        );
+                      })
+                    )}
                   </div>
-                </div>
-
-                {/* NEXT WORKOUT */}
-                <div className="card-elevated bg-white p-5 rounded-2xl flex items-center justify-between gap-4">
-                  <div className="flex gap-3.5">
-                    <div className="w-10 h-10 rounded-xl bg-indigo-50 border border-indigo-100 flex items-center justify-center flex-shrink-0 text-indigo-600 shadow-sm"><Dumbbell size={18} /></div>
-                    <div>
-                      <span className="text-[10px] font-bold text-indigo-600 uppercase block">Next Workout</span>
-                      <strong className="text-slate-800 text-xs font-black mt-1 block leading-none">{nextWorkoutFocus}</strong>
-                      <span className="text-[10px] text-slate-400 font-semibold block mt-1">Tomorrow, 07:00 AM</span>
-                    </div>
-                  </div>
-                  <button onClick={() => handleNavClick('workouts')} className="px-3.5 py-2 bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-bold rounded-xl shadow-md shadow-indigo-600/10 transition active:scale-95">View Workout</button>
                 </div>
 
               </div>
@@ -3384,33 +3838,33 @@ export default function App() {
                   {/* Left Column: Next Workout Card & Schedule */}
                   <div className="lg:col-span-2 space-y-6">
                     {/* Next Workout Feature Card */}
-                    <div className="card-elevated bg-slate-900 text-white rounded-2xl overflow-hidden relative min-h-[220px] flex flex-col justify-between p-6">
-                      {/* Decorative Background Pattern */}
-                      <div className="absolute inset-0 opacity-10 bg-[radial-gradient(#ffffff_1.5px,transparent_1.5px)] [background-size:24px_24px] pointer-events-none" />
+                    <div className="card-elevated bg-gradient-to-r from-[#6345FF] to-[#8B5CF6] text-white rounded-3xl overflow-hidden relative min-h-[220px] flex flex-col justify-between p-7 shadow-lg shadow-[#6345FF]/20">
+                      {/* Decorative Background Glow */}
+                      <div className="absolute -right-8 -bottom-8 w-48 h-48 bg-white/10 rounded-full blur-2xl pointer-events-none" />
                       
                       <div className="relative z-10 space-y-4">
-                        <span className="text-[10px] bg-indigo-500 text-white font-black px-2.5 py-1 rounded-lg uppercase tracking-wider">Next Workout</span>
+                        <span className="text-[10px] bg-white/20 backdrop-blur-md text-white font-black px-3 py-1 rounded-full uppercase tracking-wider">Next Workout</span>
                         <div className="space-y-1.5">
                           <h3 className="text-2xl font-black tracking-tight">{nextWorkoutFocus}</h3>
-                          <p className="text-slate-400 text-xs max-w-md leading-relaxed">Build strength and definition in your upper body with compound movements.</p>
+                          <p className="text-white/80 text-xs max-w-md leading-relaxed">Build strength and definition in your upper body with compound movements.</p>
                         </div>
-                        <div className="flex items-center gap-5 text-xs text-slate-300 font-bold">
-                          <span className="flex items-center gap-1.5"><Clock size={14} className="text-indigo-400" /> 60 min</span>
-                          <span className="flex items-center gap-1.5"><Flame size={14} className="text-indigo-400" /> 450 kcal est.</span>
-                          <span className="flex items-center gap-1.5"><Activity size={14} className="text-indigo-400" /> Advanced Level</span>
+                        <div className="flex items-center gap-5 text-xs text-white/90 font-bold">
+                          <span className="flex items-center gap-1.5"><Clock size={14} className="text-white/80" /> 60 min</span>
+                          <span className="flex items-center gap-1.5"><Flame size={14} className="text-white/80" /> 450 kcal est.</span>
+                          <span className="flex items-center gap-1.5"><Activity size={14} className="text-white/80" /> Advanced Level</span>
                         </div>
                       </div>
                       
                       <div className="relative z-10 flex gap-2 pt-4">
                         <button 
                           onClick={handleStartDailyCircuit}
-                          className="px-6 py-3 bg-indigo-600 hover:bg-indigo-700 text-white font-bold rounded-xl shadow-lg shadow-indigo-600/25 transition-all flex items-center gap-2 active:scale-95 text-xs"
+                          className="px-6 py-3 bg-white hover:bg-slate-50 text-[#6345FF] font-black rounded-xl shadow-lg transition-all flex items-center gap-2 active:scale-95 text-xs"
                         >
                           <Play size={14} fill="currentColor" /> Start Workout
                         </button>
                         <button 
                           onClick={() => handleNavClick('ai_coach')}
-                          className="p-3 bg-white/10 hover:bg-white/20 text-white rounded-xl transition active:scale-95 border border-white/10"
+                          className="p-3 bg-white/15 hover:bg-white/25 text-white rounded-xl transition active:scale-95 border border-white/20"
                         >
                           <MessageCircle size={14} />
                         </button>
@@ -3849,17 +4303,30 @@ export default function App() {
 
           {/* AI COACH VIEW */}
           {view === 'ai_coach' && (
-            <div className="card-elevated bg-white p-6 rounded-2xl max-w-4xl mx-auto flex flex-col h-[520px] fade-in shadow-md">
-              <div className="flex items-center gap-3 pb-4 border-b border-slate-100/60">
-                <div className="w-10 h-10 rounded-xl bg-indigo-50 border border-indigo-100 flex items-center justify-center text-indigo-600 shadow-sm shadow-indigo-500/5">
-                  <Bot size={20} />
+            <div className="card-elevated bg-white p-6 rounded-2xl max-w-4xl mx-auto flex flex-col h-[560px] fade-in shadow-md">
+              <div className="flex items-center justify-between pb-4 border-b border-slate-100/60">
+                <div className="flex items-center gap-3">
+                  <div className="w-10 h-10 rounded-xl bg-indigo-50 border border-indigo-100 flex items-center justify-center text-indigo-600 shadow-sm shadow-indigo-500/5">
+                    <Bot size={20} />
+                  </div>
+                  <div>
+                    <h3 className="font-bold text-slate-900 text-sm">Burn-Ex AI Coach</h3>
+                    <span className="text-[10px] text-emerald-500 font-bold flex items-center gap-1 mt-0.5">
+                      <span className="w-1.5 h-1.5 bg-emerald-500 rounded-full pulse-soft" />
+                      • Online • Gemini AI
+                    </span>
+                  </div>
                 </div>
-                <div>
-                  <h3 className="font-bold text-slate-900 text-sm">Burn-Ex AI Coach</h3>
-                  <span className="text-[10px] text-emerald-500 font-bold flex items-center gap-1 mt-0.5">
-                    <span className="w-1.5 h-1.5 bg-emerald-500 rounded-full pulse-soft" />
-                    • Online • Gemini AI
-                  </span>
+
+                {/* AI Daily Credit Pill */}
+                <div 
+                  onClick={() => !subscription.is_pro && setIsProModalOpen(true)}
+                  title={subscription.is_pro ? "Unlimited Pro AI Credits" : "5 AI Coach credits refreshed daily at 00:00 UTC"}
+                  className="flex items-center gap-1.5 px-3.5 py-1.5 bg-[#F5F3FF] border border-[#DDD6FE] text-[#6345FF] rounded-full text-xs font-black shadow-xs cursor-pointer hover:bg-[#EDE9FE] transition active:scale-95"
+                >
+                  <Brain size={14} className="text-[#6345FF]" />
+                  <span>{subscription.is_pro ? 'Unlimited' : `${subscription.ai_credits_remaining ?? 5} / 5`} credits</span>
+                  <span className="text-[10px] text-[#6345FF]/70">ⓘ</span>
                 </div>
               </div>
 
@@ -3904,13 +4371,28 @@ export default function App() {
                 <div ref={chatEndRef} />
               </div>
 
+              {/* Credits Exhausted (Today) Banner */}
+              {!subscription.is_pro && (subscription.ai_credits_remaining <= 0) && (
+                <div className="p-3.5 bg-red-50/90 border border-red-200 rounded-2xl flex items-start gap-3 mb-2 animate-in fade-in">
+                  <div className="w-8 h-8 rounded-xl bg-red-100 text-red-600 flex items-center justify-center flex-shrink-0">
+                    <Brain size={18} />
+                  </div>
+                  <div>
+                    <h4 className="text-xs font-black text-red-900">You've used all 5 AI credits for today</h4>
+                    <p className="text-[11px] text-red-700/80 font-medium mt-0.5">
+                      Your credit limit will reset tomorrow at 12:00 AM (UTC).
+                    </p>
+                  </div>
+                </div>
+              )}
+
               {/* Suggestion pills */}
               <div className="flex gap-2 flex-wrap pb-3">
                 {COACH_SUGGESTIONS.map((s, i) => (
                   <button
                     key={i}
                     onClick={() => handleSendChatMessage(s)}
-                    disabled={isChatLoading}
+                    disabled={isChatLoading || (!subscription.is_pro && subscription.ai_credits_remaining <= 0)}
                     className="text-[10px] font-bold px-3 py-1.5 bg-slate-50 border border-slate-200 rounded-xl text-slate-500 hover:text-indigo-600 hover:border-indigo-200 hover:bg-indigo-50/50 transition truncate active:scale-95 disabled:opacity-40 disabled:pointer-events-none"
                   >
                     {s}
@@ -3922,8 +4404,14 @@ export default function App() {
               <div className="flex gap-2 pt-3 border-t border-slate-100/60">
                 <input 
                   type="text" 
-                  disabled={isChatLoading}
-                  placeholder={isChatLoading ? "Burn-Ex AI is responding..." : "Ask your AI coach about form improvements, workouts, or recovery..."} 
+                  disabled={isChatLoading || (!subscription.is_pro && subscription.ai_credits_remaining <= 0)}
+                  placeholder={
+                    (!subscription.is_pro && subscription.ai_credits_remaining <= 0)
+                      ? "Daily credit limit reached. Resets tomorrow at 12:00 AM (UTC)..."
+                      : isChatLoading 
+                        ? "Burn-Ex AI is responding..." 
+                        : "Ask your AI coach about form improvements, workouts, or recovery..."
+                  } 
                   className="flex-1 px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl text-xs focus:outline-none focus:border-indigo-500 focus:ring-2 focus:ring-indigo-500/10 transition font-medium disabled:opacity-60"
                   value={chatInput}
                   onChange={(e) => setChatInput(e.target.value)}
@@ -3931,12 +4419,33 @@ export default function App() {
                 />
                 <button 
                   onClick={() => handleSendChatMessage()}
-                  disabled={isChatLoading || !chatInput.trim()}
+                  disabled={isChatLoading || !chatInput.trim() || (!subscription.is_pro && subscription.ai_credits_remaining <= 0)}
                   className="p-3 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl shadow-md transition disabled:opacity-40 active:scale-95 flex items-center justify-center flex-shrink-0 w-11"
                 >
                   <Send size={15} />
                 </button>
               </div>
+
+              {/* Need more AI credits? Pro Upgrade Card */}
+              {!subscription.is_pro && (
+                <div className="mt-3 p-3 bg-gradient-to-r from-[#F5F3FF] via-[#F8F7FF] to-[#EDE9FE] border border-[#DDD6FE]/60 rounded-2xl flex items-center justify-between gap-3 shadow-xs">
+                  <div className="flex items-center gap-2.5 min-w-0">
+                    <div className="w-8 h-8 rounded-xl bg-[#6345FF]/10 text-[#6345FF] flex items-center justify-center flex-shrink-0">
+                      <Crown size={16} />
+                    </div>
+                    <div className="truncate">
+                      <p className="text-xs font-black text-[#10183F] leading-tight">Need more AI credits?</p>
+                      <p className="text-[10px] text-[#66729B] font-semibold truncate">Upgrade to Burn-Ex Pro for unlimited AI Coach access and many more features.</p>
+                    </div>
+                  </div>
+                  <button
+                    onClick={() => setIsProModalOpen(true)}
+                    className="px-3.5 py-1.5 bg-[#6345FF] hover:bg-[#5235E8] text-white text-xs font-bold rounded-xl shadow-sm flex items-center gap-1.5 transition flex-shrink-0 cursor-pointer active:scale-95"
+                  >
+                    Upgrade to Pro <ArrowRight size={12} />
+                  </button>
+                </div>
+              )}
             </div>
           )}
 
@@ -5078,8 +5587,8 @@ export default function App() {
           {view === 'profile' && (
             <div className="space-y-6 fade-in max-w-6xl mx-auto pb-10">
               {/* Profile Header Banner */}
-              <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 bg-gradient-to-r from-indigo-900 via-indigo-800 to-slate-900 text-white p-6 md:p-8 rounded-3xl shadow-xl relative overflow-hidden">
-                <div className="absolute right-0 top-0 translate-x-10 -translate-y-10 w-64 h-64 bg-indigo-500/20 rounded-full blur-3xl pointer-events-none" />
+              <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 bg-gradient-to-r from-[#6345FF] via-[#7C3AED] to-[#8B5CF6] text-white p-6 md:p-8 rounded-3xl shadow-xl relative overflow-hidden">
+                <div className="absolute right-0 top-0 translate-x-10 -translate-y-10 w-64 h-64 bg-white/10 rounded-full blur-3xl pointer-events-none" />
                 <div className="flex items-center gap-5 relative z-10">
                   <div className="relative group">
                     {auth?.photoURL || profile?.avatar ? (
@@ -5237,7 +5746,7 @@ export default function App() {
                             </div>
                             <div className="bg-white border border-slate-200/80 p-3.5 rounded-xl text-center shadow-sm">
                               <span className="text-[9px] font-black text-slate-400 uppercase block">Streak</span>
-                              <strong className="text-lg font-black text-emerald-600 block mt-1">{profile?.current_streak || 12} Days</strong>
+                              <strong className="text-lg font-black text-emerald-600 block mt-1">{profile?.current_streak || streakInfo?.current || 0} Days</strong>
                             </div>
                           </div>
                         </div>
@@ -5311,7 +5820,7 @@ export default function App() {
                           <input 
                             type="date" 
                             className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl focus:outline-none focus:border-indigo-500 focus:ring-2 focus:ring-indigo-500/10 transition font-semibold text-slate-900 text-sm" 
-                            value={profile?.dob || '2001-05-15'}
+                            value={profile?.dob || ''}
                             onChange={(e) => setProfile(prev => ({ ...prev, dob: e.target.value }))}
                           />
                         </div>
@@ -5322,8 +5831,9 @@ export default function App() {
                             <input 
                               type="number" 
                               className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl focus:outline-none focus:border-indigo-500 focus:ring-2 focus:ring-indigo-500/10 transition font-semibold text-slate-900 pr-12 text-sm" 
-                              value={profile?.age || 25}
-                              onChange={(e) => setProfile(prev => ({ ...prev, age: e.target.value }))}
+                              value={profile?.age ?? ''}
+                              onChange={(e) => setProfile(prev => ({ ...prev, age: e.target.value ? Number(e.target.value) : '' }))}
+                              placeholder="25"
                             />
                             <span className="absolute right-4 top-1/2 -translate-y-1/2 text-xs font-bold text-slate-400">yrs</span>
                           </div>
@@ -5349,8 +5859,9 @@ export default function App() {
                             <input 
                               type="number" 
                               className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl focus:outline-none focus:border-indigo-500 focus:ring-2 focus:ring-indigo-500/10 transition font-semibold text-slate-900 pr-12 text-sm" 
-                              value={profile?.height_cm || 175}
-                              onChange={(e) => setProfile(prev => ({ ...prev, height_cm: e.target.value }))}
+                              value={profile?.height_cm ?? ''}
+                              onChange={(e) => setProfile(prev => ({ ...prev, height_cm: e.target.value ? Number(e.target.value) : '' }))}
+                              placeholder="175"
                             />
                             <span className="absolute right-4 top-1/2 -translate-y-1/2 text-xs font-bold text-slate-400">cm</span>
                           </div>
@@ -5362,8 +5873,9 @@ export default function App() {
                             <input 
                               type="number" 
                               className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl focus:outline-none focus:border-indigo-500 focus:ring-2 focus:ring-indigo-500/10 transition font-semibold text-slate-900 pr-12 text-sm" 
-                              value={profile?.weight_kg || 70}
-                              onChange={(e) => setProfile(prev => ({ ...prev, weight_kg: e.target.value }))}
+                              value={profile?.weight_kg ?? ''}
+                              onChange={(e) => setProfile(prev => ({ ...prev, weight_kg: e.target.value ? Number(e.target.value) : '' }))}
+                              placeholder="70"
                             />
                             <span className="absolute right-4 top-1/2 -translate-y-1/2 text-xs font-bold text-slate-400">kg</span>
                           </div>
@@ -5371,23 +5883,19 @@ export default function App() {
 
                         <div>
                           <label className="block text-xs font-bold text-slate-600 mb-1.5 uppercase">Mobile Number</label>
-                          <input 
-                            type="tel" 
-                            className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl focus:outline-none focus:border-indigo-500 focus:ring-2 focus:ring-indigo-500/10 transition font-semibold text-slate-900 text-sm" 
-                            value={profile?.mobile || '+1 (555) 234-5678'}
-                            onChange={(e) => setProfile(prev => ({ ...prev, mobile: e.target.value }))}
-                            placeholder="+1 (555) 000-0000"
+                          <IndianPhoneInput 
+                            value={profile?.mobile || ''}
+                            onChange={(val) => setProfile(prev => ({ ...prev, mobile: val }))}
+                            placeholder="9876543210"
                           />
                         </div>
 
                         <div>
                           <label className="block text-xs font-bold text-slate-600 mb-1.5 uppercase">Alternate Mobile Number</label>
-                          <input 
-                            type="tel" 
-                            className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl focus:outline-none focus:border-indigo-500 focus:ring-2 focus:ring-indigo-500/10 transition font-semibold text-slate-900 text-sm" 
-                            value={profile?.alt_mobile || '+1 (555) 987-6543'}
-                            onChange={(e) => setProfile(prev => ({ ...prev, alt_mobile: e.target.value }))}
-                            placeholder="+1 (555) 000-0000"
+                          <IndianPhoneInput 
+                            value={profile?.alt_mobile || ''}
+                            onChange={(val) => setProfile(prev => ({ ...prev, alt_mobile: val }))}
+                            placeholder="9876543210"
                           />
                         </div>
                       </div>
@@ -5773,7 +6281,7 @@ export default function App() {
                 const myRank = leaderboard.find(x => x.user_id === auth?.uid);
                 if (!myRank) return null;
                 return (
-                  <div className="card-elevated bg-gradient-to-r from-indigo-505 to-indigo-600 p-5 text-white rounded-2xl flex items-center justify-between shadow-lg shadow-indigo-500/20">
+                  <div className="card-elevated bg-gradient-to-r from-[#6345FF] to-[#8B5CF6] p-5 text-white rounded-2xl flex items-center justify-between shadow-lg shadow-[#6345FF]/20">
                     <div className="flex items-center gap-4">
                       <div className="w-10 h-10 bg-white/10 rounded-xl flex items-center justify-center font-extrabold text-lg">
                         #{myRank.rank}
@@ -6132,6 +6640,23 @@ export default function App() {
         isMuted={countdown.isMuted}
         onToggleMute={countdown.toggleMute}
         onCancel={countdown.cancelCountdown}
+      />
+
+      {/* Burn-Ex Pro Subscription & Razorpay Modal */}
+      <BurnExProModal
+        isOpen={isProModalOpen}
+        onClose={() => setIsProModalOpen(false)}
+        subscription={subscription}
+        onTrialStarted={(sub) => {
+          setSubscription(sub);
+          fetchSubscriptionStatus();
+        }}
+        onPaymentSuccess={(sub) => {
+          setSubscription(sub);
+          fetchSubscriptionStatus();
+        }}
+        token={auth?.token}
+        apiBaseUrl={API_BASE}
       />
     </div>
   );
